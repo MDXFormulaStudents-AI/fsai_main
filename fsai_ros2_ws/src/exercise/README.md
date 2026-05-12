@@ -31,7 +31,7 @@ The bag file contains ~57 seconds of sensor data from the CarMaker simulation
 
 **Download link (OneDrive):**
 
-> [PLACEHOLDER — instructor to paste OneDrive share link here]
+> [ROSBags on OneDrive](https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge=o8E9HnS4IG1WNoNMaMSMms833KfRUH6pA19lvT7A-eU&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state=GGey8qXolBpgvO8MBY_pQYHqlVUnruGqiUyOhTgSnq0&originator=opencode)
 
 extract the downloaded folder to:
 
