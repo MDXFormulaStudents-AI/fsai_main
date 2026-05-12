@@ -15,7 +15,7 @@ What you will learn
 Topics
 ------
   Subscribes : /detections/lidar   (fsai_interfaces/msg/Cone3DArray)
-  Publishes  : /student/cone_counts (std_msgs/msg/String)
+  Publishes  : /exercise/cone_counts (std_msgs/msg/String)
 
 Running
 -------
@@ -23,7 +23,7 @@ Running
 
 Verify
 ------
-  ros2 topic echo /student/cone_counts
+  ros2 topic echo /exercise/cone_counts
 
 YOUR TASKS
 ----------
@@ -32,7 +32,7 @@ YOUR TASKS
   TODO-2  Add a 'total' field to the published string that shows the total
           number of cones passing the threshold across all colours.
   TODO-3  Add a second publisher that emits the count for EACH colour on
-          its own topic:  /student/count/yellow,  /student/count/blue, etc.
+          its own topic:  /exercise/count/yellow,  /exercise/count/blue, etc.
           Use std_msgs/msg/Int32 for these.
   TODO-4  (Challenge) Keep a running maximum — track the highest cone count
           seen since the node started and include it in the log output.
@@ -66,14 +66,14 @@ class DetectionCounterNode(Node):
         # --- Publisher --------------------------------------------------------
         self._pub = self.create_publisher(
             String,
-            '/student/cone_counts',
+            '/exercise/cone_counts',
             10,
         )
 
         self.get_logger().info(
             f'DetectionCounterNode started  '
             f'(confidence threshold = {CONFIDENCE_THRESHOLD:.2f})\n'
-            f'  echo results:  ros2 topic echo /student/cone_counts'
+            f'  echo results:  ros2 topic echo /exercise/cone_counts'
         )
 
     # --------------------------------------------------------------------------

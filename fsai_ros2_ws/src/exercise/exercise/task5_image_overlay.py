@@ -20,7 +20,7 @@ Topics
 ------
   Subscribes : /camera/image_raw        (sensor_msgs/msg/Image)
   Subscribes : /detections/lidar        (fsai_interfaces/msg/Cone3DArray)
-  Publishes  : /student/annotated_image (sensor_msgs/msg/Image)
+  Publishes  : /exercise/annotated_image (sensor_msgs/msg/Image)
 
 Running
 -------
@@ -29,7 +29,7 @@ Running
 Add to RViz2 manually
 ---------------------
   1. Open RViz2  (./Start_RViz.sh)
-  2. Click  Add  →  By topic  →  /student/annotated_image  →  Image
+  2. Click  Add  →  By topic  →  /exercise/annotated_image  →  Image
   3. The annotated camera feed should appear in the Image panel.
 
 YOUR TASKS
@@ -48,7 +48,7 @@ YOUR TASKS
 import math
 
 import cv2
-import numpy as np  # noqa: F401 – imported for students who extend this file
+import numpy as np  # noqa: F401 – imported for those who extend this file
 
 import rclpy
 from rclpy.node import Node
@@ -95,13 +95,13 @@ class ImageOverlayNode(Node):
         # --- Publisher --------------------------------------------------------
         self._pub = self.create_publisher(
             Image,
-            '/student/annotated_image',
+            '/exercise/annotated_image',
             10,
         )
 
         self.get_logger().info(
             'ImageOverlayNode started.\n'
-            '  Add /student/annotated_image as an Image display in RViz2.'
+            '  Add /exercise/annotated_image as an Image display in RViz2.'
         )
 
     # --------------------------------------------------------------------------

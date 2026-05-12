@@ -15,7 +15,7 @@ What you will learn
 Topics
 ------
   Subscribes : /detections/lidar            (fsai_interfaces/msg/Cone3DArray)
-  Publishes  : /student/cone_distance_markers (visualization_msgs/msg/MarkerArray)
+  Publishes  : /exercise/cone_distance_markers (visualization_msgs/msg/MarkerArray)
 
 Running
 -------
@@ -24,7 +24,7 @@ Running
 Verify in RViz2
 ---------------
   1. Open RViz2 (./Start_RViz.sh)
-  2. Click Add → By topic → /student/cone_distance_markers → MarkerArray
+  2. Click Add → By topic → /exercise/cone_distance_markers → MarkerArray
   3. You should see distance labels floating above each detected cone.
 
 YOUR TASKS
@@ -77,12 +77,12 @@ class ConeDistanceNode(Node):
         # --- Publisher --------------------------------------------------------
         self._pub = self.create_publisher(
             MarkerArray,
-            '/student/cone_distance_markers',
+            '/exercise/cone_distance_markers',
             10,
         )
 
         self.get_logger().info(
-            'ConeDistanceNode started — add /student/cone_distance_markers '
+            'ConeDistanceNode started — add /exercise/cone_distance_markers '
             'as a MarkerArray in RViz2 to see the results.'
         )
 

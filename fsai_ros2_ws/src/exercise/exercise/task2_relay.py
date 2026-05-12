@@ -13,7 +13,7 @@ What you will learn
 Topics
 ------
   Subscribes : /detections/lidar   (fsai_interfaces/msg/Cone3DArray)
-  Publishes  : /student/cones      (fsai_interfaces/msg/Cone3DArray)
+  Publishes  : /exercise/cones      (fsai_interfaces/msg/Cone3DArray)
 
 Running
 -------
@@ -21,14 +21,14 @@ Running
 
 Verify
 ------
-  ros2 topic echo /student/cones
-  ros2 topic hz   /student/cones
+  ros2 topic echo /exercise/cones
+  ros2 topic hz   /exercise/cones
 
 YOUR TASKS
 ----------
   TODO-1  Read through the node and make sure you understand every line.
-  TODO-2  Change the name of the output topic from /student/cones to
-          /student/<your_name>/cones and verify with ros2 topic list.
+  TODO-2  Change the name of the output topic from /exercise/cones to
+          /exercise/<your_name>/cones and verify with ros2 topic list.
   TODO-3  Add a counter that tracks the total number of cones relayed
           since the node started and log it alongside the per-message count.
 """
@@ -59,9 +59,12 @@ class RelayNode(Node):
         # We will push the message back out on this new topic name.
         self._pub = self.create_publisher(
             Cone3DArray,
-            '/student/cones',
+            '/exercise/test/cones',
             10,
         )
+
+        # --- Counter for total cones relayed ----------------------------------
+        self._total_cones = 0
 
         self.get_logger().info('RelayNode started — listening on /detections/lidar')
 
@@ -73,11 +76,15 @@ class RelayNode(Node):
         """Called every time a Cone3DArray message is received."""
 
         cone_count = len(msg.cones)
+        self._total_cones += cone_count
 
         # Re-publish the message exactly as received
         self._pub.publish(msg)
 
-        self.get_logger().info(f'Relayed {cone_count} cones → /student/cones')
+        self.get_logger().info(
+            f'Relayed {cone_count} cones → /exercise/test/cones '
+            f'(total: {self._total_cones})'
+        )
 
 
 # ------------------------------------------------------------------------------

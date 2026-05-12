@@ -19,7 +19,12 @@ sensor data from a Formula Student AI simulation.
 
 ## Prerequisites
 
-- ROS2
+- ROS2 (Humble or Jazzy)
+
+> **Note:** These instructions use `$ROS_DISTRO` to automatically adapt to your installed ROS version. You must have sourced your ROS setup at least once so that the `ROS_DISTRO` environment variable is set. If not already set, you can manually export it:
+> ```bash
+> export ROS_DISTRO=jazzy  # or 'humble' for Humble
+> ```
 
 
 ---
@@ -49,14 +54,14 @@ Open a terminal and run these two commands.  You will need to do this in
 **every new terminal** you open.
 
 ```bash
-source /opt/ros/humble/setup.bash
+source /opt/ros/$ROS_DISTRO/setup.bash
 source ~/fsai_main/fsai_ros2_ws/install/setup.bash
 ```
 
-> **Tip — save yourself typing:** add both lines to your `~/.bashrc` so they
+ > **Tip — save yourself typing:** add both lines to your `~/.bashrc` so they
 > run automatically every time you open a terminal:
 > ```bash
-> echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+> echo "source /opt/ros/$ROS_DISTRO/setup.bash" >> ~/.bashrc
 > echo "source ~/fsai_main/fsai_ros2_ws/install/setup.bash" >> ~/.bashrc
 > ```
 
@@ -81,7 +86,7 @@ through the tasks.
 
 ```bash
 # Source first (if you haven't added it to ~/.bashrc)
-source /opt/ros/humble/setup.bash
+source /opt/ros/$ROS_DISTRO/setup.bash
 source ~/fsai_main/fsai_ros2_ws/install/setup.bash
 
 # Play the bag on loop so data never stops
@@ -153,7 +158,7 @@ ros2 node list
 **File:** `exercise/task2_relay.py`
 
 Subscribe to `/detections/lidar` and re-publish the exact same data on
-`/student/cones`.
+`/exercise/cones`.
 
 ### Run it
 
@@ -166,14 +171,14 @@ ros2 run exercise task2_relay
 Open a second terminal and echo the new topic:
 
 ```bash
-ros2 topic echo /student/cones
+ros2 topic echo /exercise/cones
 ```
 
 Compare with the original:
 
 ```bash
 ros2 topic hz /detections/lidar
-ros2 topic hz /student/cones
+ros2 topic hz /exercise/cones
 ```
 
 They should publish at the same rate.
@@ -181,7 +186,7 @@ They should publish at the same rate.
 ### Your tasks (see TODOs in the file)
 
 - **TODO-1** Read through the node and make sure you understand every line.
-- **TODO-2** Change the output topic name to `/student/<your_name>/cones`.
+- **TODO-2** Change the output topic name to `/exercise/<your_name>/cones`.
 - **TODO-3** Add a running total of cones relayed since node start.
 
 ---
@@ -209,13 +214,13 @@ ros2 run exercise task3_distance
 
 ### Add to RViz2
 
-1. In RViz2 click **Add** → **By topic** → `/student/cone_distance_markers` → **MarkerArray** → **OK**
+1. In RViz2 click **Add** → **By topic** → `/exercise/cone_distance_markers` → **MarkerArray** → **OK**
 2. Distance labels should appear above each cone in the 3-D view.
 
 ### Verify on the command line
 
 ```bash
-ros2 topic echo /student/cone_distance_markers
+ros2 topic echo /exercise/cone_distance_markers
 ```
 
 ### Your tasks (see TODOs in the file)
@@ -243,7 +248,7 @@ ros2 run exercise task4_counter
 ### Verify
 
 ```bash
-ros2 topic echo /student/cone_counts
+ros2 topic echo /exercise/cone_counts
 ```
 
 You will see output like:
@@ -256,7 +261,7 @@ data: 'blue: 2 | yellow: 3  (threshold=0.70)'
 
 - **TODO-1** Change `CONFIDENCE_THRESHOLD` to 0.5, 0.8, 0.95 and observe the effect.
 - **TODO-2** Add a `total` field to the output string.
-- **TODO-3** Add separate publishers per colour: `/student/count/yellow`, `/student/count/blue`, etc.
+- **TODO-3** Add separate publishers per colour: `/exercise/count/yellow`, `/exercise/count/blue`, etc.
 - **TODO-4** Track and log the highest cone count seen since node start.
 
 ---
@@ -276,7 +281,7 @@ ros2 run exercise task5_overlay
 
 ### Add to RViz2
 
-1. In RViz2 click **Add** → **By topic** → `/student/annotated_image` → **Image** → **OK**
+1. In RViz2 click **Add** → **By topic** → `/exercise/annotated_image` → **Image** → **OK**
 2. A camera panel should appear showing the HUD overlay.
 
 ### What the HUD shows
@@ -330,7 +335,7 @@ ros2 run exercise task5_overlay
 | RViz shows nothing | Check the **Fixed Frame** (top of Displays panel) — set it to `Fr1A` |
 | Markers appear in wrong place | Check `frame_id` in the marker matches the Fixed Frame |
 | Image display is black | Confirm the bag is playing and the encoding matches (`bgr8`) |
-| `ModuleNotFoundError: cv_bridge` | Run `sudo apt install ros-humble-cv-bridge` |
+| `ModuleNotFoundError: cv_bridge` | Run `sudo apt install ros-$ROS_DISTRO-cv-bridge` |
 
 ---
 
@@ -342,7 +347,7 @@ ros2 run exercise task5_overlay
 | `/camera/image_raw` | `sensor_msgs/Image` | Raw RGB camera feed |
 | `/carmaker/odom` | `nav_msgs/Odometry` | Car position and velocity |
 | `/lidar/pointcloud` | `sensor_msgs/PointCloud2` | Raw LiDAR point cloud |
-| `/student/cones` | `fsai_interfaces/Cone3DArray` | Your relay output (Task 2) |
-| `/student/cone_distance_markers` | `visualization_msgs/MarkerArray` | Your distance labels (Task 3) |
-| `/student/cone_counts` | `std_msgs/String` | Your counter output (Task 4) |
-| `/student/annotated_image` | `sensor_msgs/Image` | Your HUD image (Task 5) |
+| `/exercise/cones` | `fsai_interfaces/Cone3DArray` | Your relay output (Task 2) |
+| `/exercise/cone_distance_markers` | `visualization_msgs/MarkerArray` | Your distance labels (Task 3) |
+| `/exercise/cone_counts` | `std_msgs/String` | Your counter output (Task 4) |
+| `/exercise/annotated_image` | `sensor_msgs/Image` | Your HUD image (Task 5) |
