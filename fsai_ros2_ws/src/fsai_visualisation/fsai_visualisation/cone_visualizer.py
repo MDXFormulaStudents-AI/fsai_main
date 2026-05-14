@@ -35,13 +35,8 @@ _WHEELS = [
     (0.557, -0.476 + _WY_OFFSET, 0.257),   # Rear Right
 ]
 
-# Alpha for unknown (LiDAR-only) cones — dimmer so fused cones stand out
-_ALPHA_FUSED   = 1.0
-_ALPHA_UNKNOWN = 0.35
-
-
 def _mesh_marker(frame_id, ns, mid, x, y, z, mesh_path,
-                 alpha=1.0, lifetime_sec=0) -> Marker:
+                 ghost=False, lifetime_sec=0) -> Marker:
     m = Marker()
     m.header.frame_id = frame_id
     m.ns     = ns
@@ -55,7 +50,14 @@ def _mesh_marker(frame_id, ns, mid, x, y, z, mesh_path,
     m.scale.x = m.scale.y = m.scale.z = 1.0
     m.mesh_resource = mesh_path
     m.mesh_use_embedded_materials = True
-    m.color.a = alpha   # must set alpha even with embedded materials
+    # color.a = 0 → RViz uses embedded materials at full intensity (correct)
+    # color.a > 0 with r=g=b=0 → RViz multiplies materials by black (wrong/dark)
+    if ghost:
+        # Semi-transparent white tint for LiDAR-only cones
+        m.color.r = 1.0
+        m.color.g = 1.0
+        m.color.b = 1.0
+        m.color.a = 0.35
     if lifetime_sec:
         m.lifetime.sec = lifetime_sec
     return m
@@ -98,8 +100,7 @@ class ConeVisualizer(Node):
             if is_unknown and not self._show_unk:
                 continue
 
-            alpha = _ALPHA_UNKNOWN if is_unknown else _ALPHA_FUSED
-            mesh  = CONE_MESH.get(cone.class_name, DEFAULT_CONE_MESH)
+            mesh = CONE_MESH.get(cone.class_name, DEFAULT_CONE_MESH)
 
             m = _mesh_marker(
                 frame_id    = msg.header.frame_id,
@@ -109,7 +110,7 @@ class ConeVisualizer(Node):
                 y           = cone.position.y,
                 z           = cone.position.z,
                 mesh_path   = mesh,
-                alpha       = alpha,
+                ghost       = is_unknown,
                 lifetime_sec= 1,
             )
             m.header.stamp = msg.header.stamp
@@ -126,7 +127,8 @@ class ConeVisualizer(Node):
             label.pose.position.z = cone.position.z + 0.45
             label.pose.orientation.w = 1.0
             label.scale.z     = 0.08
-            label.color       = ColorRGBA(r=1.0, g=1.0, b=1.0, a=alpha)
+            label.color       = ColorRGBA(r=1.0, g=1.0, b=1.0,
+                                          a=0.35 if is_unknown else 1.0)
             label.text        = f'{cone.class_name[0]} {cone.confidence:.2f}'
             label.lifetime.sec= 1
             markers.markers.append(label)

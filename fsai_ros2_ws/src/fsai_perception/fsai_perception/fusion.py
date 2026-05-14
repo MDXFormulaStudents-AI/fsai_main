@@ -224,13 +224,17 @@ class Fusion(Node):
                     matched_camera.add(c)
 
         # --- Build output cones ---
+        # Use the original scan timestamp so downstream consumers (RViz, nav)
+        # know exactly when these positions were measured, not when we finished
+        # processing them. This keeps cone markers temporally aligned with the
+        # raw LiDAR scan even as pipeline latency grows at higher speeds.
+        scan_stamp = msg.header.stamp
         out_cones = []
-        now_stamp = now.to_msg()
 
         for i, cone in enumerate(cones):
             p = positions_fr1a[i]
             out = Cone3D()
-            out.header.stamp    = now_stamp
+            out.header.stamp    = scan_stamp
             out.header.frame_id = self._out_frame
             out.position        = Point(x=float(p[0]), y=float(p[1]), z=0.0)
 
@@ -247,7 +251,7 @@ class Fusion(Node):
             out_cones.append(out)
 
         result = Cone3DArray()
-        result.header.stamp    = now_stamp
+        result.header.stamp    = scan_stamp
         result.header.frame_id = self._out_frame
         result.cones           = out_cones
         self._pub.publish(result)
