@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>fsai_visualisation</name>
+  <version>0.1.0</version>
+  <description>RViz visualisation for the MDX FSAI perception pipeline — cone markers, car mesh, and RViz config.</description>
+  <maintainer email="shuaibuoluwatunmise@gmail.com">MDX FSAI</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>fsai_interfaces</depend>
+  <depend>visualization_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

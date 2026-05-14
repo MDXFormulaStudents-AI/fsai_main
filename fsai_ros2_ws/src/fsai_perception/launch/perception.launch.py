@@ -1,0 +1,68 @@
+"""
+perception.launch.py — launches the full perception pipeline:
+  bridge → lidar_detector → camera_detector → fusion → /cones
+"""
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+
+
+def generate_launch_description():
+    pkg = FindPackageShare('fsai_perception')
+
+    return LaunchDescription([
+
+        DeclareLaunchArgument('visualize', default_value='false',
+                              description='Launch RViz'),
+        DeclareLaunchArgument('device', default_value='cuda:0',
+                              description='YOLO inference device: cpu or cuda:0'),
+
+        # ── Bridge ──────────────────────────────────────────────────────
+        Node(
+            package='fsai_perception',
+            executable='bridge',
+            name='bridge',
+            output='screen',
+        ),
+
+        # ── LiDAR Detector ──────────────────────────────────────────────
+        Node(
+            package='fsai_perception',
+            executable='lidar_detector',
+            name='lidar_detector',
+            output='screen',
+            parameters=[{'use_sim_time': True}],
+        ),
+
+        # ── Camera Detector ─────────────────────────────────────────────
+        Node(
+            package='fsai_perception',
+            executable='camera_detector',
+            name='camera_detector',
+            output='screen',
+            parameters=[{
+                'device': LaunchConfiguration('device'),
+                'use_sim_time': True,
+            }],
+        ),
+
+        # ── Fusion ──────────────────────────────────────────────────────
+        Node(
+            package='fsai_perception',
+            executable='fusion',
+            name='fusion',
+            output='screen',
+            parameters=[{'use_sim_time': True}],
+        ),
+
+        # ── RViz (optional) ─────────────────────────────────────────────
+        Node(
+            package='rviz2',
+            executable='rviz2',
+            name='rviz2',
+            condition=IfCondition(LaunchConfiguration('visualize')),
+        ),
+    ])

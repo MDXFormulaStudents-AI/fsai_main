@@ -1,0 +1,63 @@
+# =============================================================================
+# FSAI Perception Pipeline — Central Config
+# All tunable parameters live here. Each node reads its section at startup.
+# Parameters can still be overridden at launch time via --ros-args -p <key>:=<val>
+# =============================================================================
+
+bridge:
+  # Raw CarMaker topics (inputs)
+  pointcloud_in:  /carmaker/pointcloud
+  image_in:       /front_camera_rgb/image_raw
+  depth_in:       /front_camera_depth/image_raw
+  # Normalised internal topics (outputs)
+  pointcloud_out: /perception/pointcloud
+  image_out:      /perception/image
+  depth_out:      /perception/depth
+  # Depth conversion: CarMaker sends mono16 in cm → convert to float32 metres
+  depth_max_m: 50.0
+
+lidar_detector:
+  input_topic:  /perception/pointcloud
+  output_topic: /perception/lidar/cones
+  # DBSCAN clustering
+  eps:        0.35    # cluster radius (m)
+  min_points: 2       # minimum points per cluster
+  # Detection range
+  min_distance_m: 0.2
+  max_distance_m: 30.0
+  # Cone footprint validation (XY plane)
+  cone_width_min_m: 0.03
+  cone_width_max_m: 0.60
+  # Height validation (disable for horizontal/2D LiDAR)
+  use_height_filter:  false
+  cone_height_min_m:  0.05
+  cone_height_max_m:  0.50
+  # Ground removal: strip points within this distance of estimated ground
+  ground_threshold_m: 0.10
+  # Split merged clusters (two cones touching in DBSCAN)
+  split_threshold_m: 0.45
+  # Retro-reflective intensity filter (set false to disable)
+  use_intensity_filter: true
+
+camera_detector:
+  input_topic:         /perception/image
+  output_topic:        /perception/camera/detections
+  visualization_topic: /perception/camera/image
+  model_path:          models/best.pt   # relative to package share dir
+  confidence:    0.50
+  iou:           0.45
+  input_size:    640
+  device:        cuda:0     # use 'cpu' if no GPU
+  publish_visualization: true
+
+fusion:
+  lidar_input:  /perception/lidar/cones
+  camera_input: /perception/camera/detections
+  output_topic: /cones
+  # How old a camera detection can be before we stop trusting its colour (seconds)
+  camera_max_age_s: 1.0
+  # How many pixels outside a bbox a projected LiDAR point can be and still match
+  bbox_margin_px: 15.0
+  # TF frames
+  lidar_frame:  Lidar_F
+  output_frame: Fr1A
