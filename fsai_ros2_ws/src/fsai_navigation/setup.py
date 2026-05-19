@@ -25,6 +25,10 @@ setup(
     entry_points={
         'console_scripts': [
             'corridor_midpoint_planner = fsai_navigation.corridor_midpoint_planner:main',
+            'global_path_follower = fsai_navigation.global_path_follower:main',
+            'object_list_global_planner = fsai_navigation.object_list_global_planner:main',
+            'one_sided_offset_planner = fsai_navigation.one_sided_offset_planner:main',
+            'persistent_hybrid_planner = fsai_navigation.persistent_hybrid_planner:main',
             'persistent_corridor_planner = fsai_navigation.persistent_corridor_planner:main',
             'reactive_marker_planner = fsai_navigation.reactive_marker_planner:main',
         ],
