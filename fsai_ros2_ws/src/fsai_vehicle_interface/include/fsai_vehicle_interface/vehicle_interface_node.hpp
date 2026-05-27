@@ -31,6 +31,7 @@ namespace fsai_vehicle_interface
  * Subscribes to:
  *   /vehicle/drive_command   [fsai_interfaces/DriveCommand]
  *   /vehicle/mission_complete [std_msgs/Bool]
+ *   /vehicle/estop            [std_msgs/Bool]  — latching EBS trigger
  *
  * Publishes:
  *   /vcu/status              [fsai_interfaces/VcuStatus]
@@ -55,6 +56,7 @@ private:
   bool api_initialized_{false};
   bool has_vcu_status_{false};
   bool mission_complete_received_{false};
+  bool estop_requested_{false};           // latched — once true, never cleared
   rclcpp::Time last_drive_command_time_;
   fsai_interfaces::msg::DriveCommand::SharedPtr latest_drive_command_;
 
@@ -76,6 +78,7 @@ private:
   // ── Subscribers ──────────────────────────────────────────────────────────
   rclcpp::Subscription<fsai_interfaces::msg::DriveCommand>::SharedPtr  sub_drive_command_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr                  sub_mission_complete_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr                  sub_estop_;
 
   // ── Timer ────────────────────────────────────────────────────────────────
   rclcpp::TimerBase::SharedPtr timer_;
@@ -84,6 +87,7 @@ private:
   void timer_callback();
   void drive_command_callback(fsai_interfaces::msg::DriveCommand::SharedPtr msg);
   void mission_complete_callback(std_msgs::msg::Bool::SharedPtr msg);
+  void estop_callback(std_msgs::msg::Bool::SharedPtr msg);
 
   // ── Publish helpers ──────────────────────────────────────────────────────
   void publish_vcu_status(const fs_ai_api_vcu2ai & vcu2ai);

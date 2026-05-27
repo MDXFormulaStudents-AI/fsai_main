@@ -55,6 +55,10 @@ VehicleInterfaceNode::VehicleInterfaceNode(const rclcpp::NodeOptions & options)
     "/vehicle/mission_complete", 10,
     std::bind(&VehicleInterfaceNode::mission_complete_callback, this, std::placeholders::_1));
 
+  sub_estop_ = this->create_subscription<std_msgs::msg::Bool>(
+    "/vehicle/estop", 1,
+    std::bind(&VehicleInterfaceNode::estop_callback, this, std::placeholders::_1));
+
   // ── Initialise FS-AI API ───────────────────────────────────────────────────
   RCLCPP_INFO(this->get_logger(),
     "Initialising FS-AI API on CAN interface: %s", can_interface_.c_str());
@@ -149,8 +153,8 @@ void VehicleInterfaceNode::timer_callback()
   ai2vcu.AI2VCU_MISSION_STATUS    = state_machine_.get_mission_status();
   ai2vcu.AI2VCU_DIRECTION_REQUEST = state_machine_.get_direction();
 
-  // E-stop is physical RES only — never set from software
-  ai2vcu.AI2VCU_ESTOP_REQUEST = ESTOP_NO;
+  // E-stop: physical RES always takes priority; software can also latch it via /vehicle/estop
+  ai2vcu.AI2VCU_ESTOP_REQUEST = estop_requested_ ? ESTOP_YES : ESTOP_NO;
 
   // Drive commands: only forward in DRIVING state with a fresh command
   if (state_machine_.should_forward_commands() && is_drive_command_fresh() && latest_drive_command_) {
@@ -191,6 +195,16 @@ void VehicleInterfaceNode::mission_complete_callback(
     RCLCPP_INFO(this->get_logger(),
       "Mission complete received on /vehicle/mission_complete");
     mission_complete_received_ = true;
+  }
+}
+
+void VehicleInterfaceNode::estop_callback(std_msgs::msg::Bool::SharedPtr msg)
+{
+  if (msg->data && !estop_requested_) {
+    RCLCPP_WARN(this->get_logger(),
+      "EBS triggered by software request on /vehicle/estop — "
+      "ESTOP_YES will be sent every tick until VCU power cycle");
+    estop_requested_ = true;
   }
 }
 

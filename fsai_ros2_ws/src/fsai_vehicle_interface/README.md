@@ -27,7 +27,7 @@ This package sits between the autonomous software stack and the vehicle CAN bus.
 - [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Repository Layout](#repository-layout)
-- [Messages](#messages)
+- [Messages to transfer to `fsai_interfaces`](#messages-to-transfer-to-fsai_interfaces)
 - [Building](#building)
 - [CAN Bus Setup](#can-bus-setup)
 - [Running](#running)
@@ -77,6 +77,11 @@ fsai_vehicle_interface/
 │   ├── main.cpp                     # Entry point — creates and spins the node
 │   ├── state_machine.cpp            # ADS-DV mission handshake state machine
 │   └── vehicle_interface_node.cpp   # 100 Hz main loop, publishers, subscribers
+├── messages_for_fsai_interfaces/    # .msg files to COPY into fsai_interfaces/msg/
+│   ├── DriveCommand.msg
+│   ├── VcuStatus.msg
+│   ├── WheelSpeeds.msg
+│   └── InterfaceState.msg
 ├── launch/
 │   └── vehicle_interface.launch.py  # ROS 2 launch file
 ├── config/
@@ -89,11 +94,32 @@ fsai_vehicle_interface/
 
 ---
 
-## Messages
+## Messages to transfer to `fsai_interfaces`
 
-This package depends on four custom message types that live in the `fsai_interfaces` package.
+This package depends on four custom message types that must live in the `fsai_interfaces` package (the shared message package for the MDX FSAI stack).
 
-**These are already integrated** — the `.msg` files are in `fsai_interfaces/msg/` and registered in its `CMakeLists.txt`. No manual steps needed.
+**Before building**, copy all four `.msg` files from `messages_for_fsai_interfaces/` into `fsai_interfaces/msg/` and register them in `fsai_interfaces/CMakeLists.txt`:
+
+```bash
+# From the repo root (fsai_ros2_ws/src/)
+cp fsai_vehicle_interface/messages_for_fsai_interfaces/*.msg \
+   fsai_interfaces/msg/
+```
+
+Then in `fsai_interfaces/CMakeLists.txt`, add the four messages to the `rosidl_generate_interfaces()` call:
+
+```cmake
+rosidl_generate_interfaces(${PROJECT_NAME}
+  # ... existing messages ...
+  "msg/DriveCommand.msg"
+  "msg/VcuStatus.msg"
+  "msg/WheelSpeeds.msg"
+  "msg/InterfaceState.msg"
+  DEPENDENCIES std_msgs
+)
+```
+
+Rebuild `fsai_interfaces` first so the generated headers are available when building this package.
 
 ### Message summary
 
@@ -201,6 +227,7 @@ ros2 run fsai_vehicle_interface vehicle_interface_node \
 |---|---|---|
 | `/vehicle/drive_command` | `fsai_interfaces/DriveCommand` | Actuator setpoints. Only forwarded to CAN when state is `DRIVING` and command is fresh. |
 | `/vehicle/mission_complete` | `std_msgs/Bool` | Publish `true` once to signal mission finished. Triggers `FINISHING` state. |
+| `/vehicle/estop` | `std_msgs/Bool` | Publish `true` to trigger EBS immediately (latched — cannot be un-triggered without a VCU power cycle). Required for Static Inspection B, Autonomous Demo end sequence, and rule T4.2.2 sensor loss handling. |
 
 ### Published topics (outputs to the autonomous stack)
 
