@@ -1,0 +1,30 @@
+# params.yaml — default parameters for the fsai_vehicle_interface node
+#
+# These are loaded by vehicle_interface.launch.py.
+# Override individual values on the command line:
+#
+#   ros2 launch fsai_vehicle_interface vehicle_interface.launch.py can_interface:=vcan0
+#
+# Or supply your own YAML file:
+#
+#   ros2 launch fsai_vehicle_interface vehicle_interface.launch.py \
+#     params_file:=/path/to/my_params.yaml
+
+vehicle_interface:
+  ros__parameters:
+
+    # Name of the SocketCAN network interface.
+    # Use 'vcan0' for simulation / bench testing (no physical CAN hardware needed).
+    # Use 'can0' when connected to the actual ADS-DV vehicle.
+    can_interface: "can0"
+
+    # Drive command stale threshold [milliseconds].
+    # If no DriveCommand is received within this window, the node zeros all
+    # actuator outputs and logs a throttled warning.
+    # At 100 Hz autonomous stack output, 100 ms = 10 missed frames.
+    stale_command_timeout_ms: 100
+
+    # TF frame IDs embedded in sensor messages.
+    # Match these to whatever frame names your TF tree uses.
+    imu_frame_id: "imu"
+    gps_frame_id: "gps"

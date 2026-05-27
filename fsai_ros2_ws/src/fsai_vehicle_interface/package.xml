@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>fsai_vehicle_interface</name>
+  <version>1.0.0</version>
+  <description>
+    ROS 2 hardware abstraction layer for the ADS-DV vehicle over CAN bus.
+    Wraps the FS-AI API C library, publishes VCU sensor data as ROS 2 topics,
+    and forwards drive commands from the autonomous stack to the vehicle.
+
+    This package vendors the FS-AI_API C source files internally and is
+    self-contained — it does not depend on the FS-AI_API repository being
+    present on the build machine.
+  </description>
+
+  <maintainer email="shuaibuoluwatunmise@gmail.com">Shuaibu Oluwatunmise</maintainer>
+  <license>MIT</license>
+
+  <!-- Build tools -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Runtime dependencies -->
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>fsai_interfaces</depend>
+
+  <!-- Test dependencies -->
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
