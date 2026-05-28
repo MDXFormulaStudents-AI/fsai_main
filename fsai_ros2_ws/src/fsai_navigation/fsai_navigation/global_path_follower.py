@@ -44,10 +44,10 @@ class GlobalPathFollower(Node):
         self.declare_parameter('path_timeout_sec', 1.0)
         self.declare_parameter('odom_timeout_sec', 0.5)
         self.declare_parameter('wheelbase', 1.6)
-        self.declare_parameter('lookahead_distance', 4.0)
-        self.declare_parameter('lookahead_time', 0.35)
-        self.declare_parameter('min_lookahead_distance', 2.0)
-        self.declare_parameter('max_lookahead_distance', 8.0)
+        self.declare_parameter('lookahead_distance', 2.8)
+        self.declare_parameter('lookahead_time', 0.25)
+        self.declare_parameter('min_lookahead_distance', 1.4)
+        self.declare_parameter('max_lookahead_distance', 6.0)
         self.declare_parameter('curvature_preview_distance', 12.0)
         self.declare_parameter('curvature_point_step', 4)
         self.declare_parameter('min_speed', 1.2)
@@ -62,7 +62,10 @@ class GlobalPathFollower(Node):
         self.declare_parameter('stop_brake', 0.8)
         self.declare_parameter('max_steer', 0.6)
         self.declare_parameter('steer_sign', 1.0)
-        self.declare_parameter('max_steer_rate', 2.0)
+        self.declare_parameter('max_steer_rate', 4.0)
+        self.declare_parameter('heading_gain', 0.35)
+        self.declare_parameter('cross_track_gain', 0.45)
+        self.declare_parameter('cross_track_softening', 1.0)
         self.declare_parameter('selector_ctrl', 1)
         self.declare_parameter('debug_line_width', 0.06)
         self.declare_parameter('debug_point_diameter', 0.25)
@@ -97,6 +100,9 @@ class GlobalPathFollower(Node):
         self._max_steer = float(self.get_parameter('max_steer').value)
         self._steer_sign = float(self.get_parameter('steer_sign').value)
         self._max_steer_rate = float(self.get_parameter('max_steer_rate').value)
+        self._heading_gain = float(self.get_parameter('heading_gain').value)
+        self._cross_track_gain = float(self.get_parameter('cross_track_gain').value)
+        self._cross_track_softening = max(0.01, float(self.get_parameter('cross_track_softening').value))
         self._selector_ctrl = int(self.get_parameter('selector_ctrl').value)
         self._debug_line_width = float(self.get_parameter('debug_line_width').value)
         self._debug_point_diameter = float(self.get_parameter('debug_point_diameter').value)
@@ -201,15 +207,12 @@ class GlobalPathFollower(Node):
             return None
 
         lookahead_point = self._path_points[lookahead_index]
-        target_x, target_y = self._to_vehicle_frame(vehicle, yaw, lookahead_point)
-        target_distance_sq = max(target_x * target_x + target_y * target_y, 1e-6)
-        curvature_to_target = 2.0 * target_y / target_distance_sq
-        steer = math.atan(self._wheelbase * curvature_to_target)
+        steer = self._steering_command(vehicle, yaw, speed, nearest_index, lookahead_index, cross_track_error)
         steer = self._clamp(self._steer_sign * steer, -self._max_steer, self._max_steer)
         steer = self._rate_limit_steer(steer, now_sec)
 
         path_curvature = self._max_preview_curvature(nearest_index)
-        target_speed = self._target_speed(path_curvature, cross_track_error)
+        target_speed = self._target_speed(path_curvature, abs(cross_track_error))
         gas, brake = self._speed_command(speed, target_speed)
 
         return ControlTarget(
@@ -228,8 +231,10 @@ class GlobalPathFollower(Node):
     def _nearest_forward_index(self, vehicle: Point, yaw: float) -> tuple[int, float]:
         best_index = 0
         best_distance_sq = float('inf')
+        best_cross_track_error = 0.0
         fallback_index = 0
         fallback_distance_sq = float('inf')
+        fallback_cross_track_error = 0.0
 
         for idx, point in enumerate(self._path_points):
             local_x, local_y = self._to_vehicle_frame(vehicle, yaw, point)
@@ -237,17 +242,55 @@ class GlobalPathFollower(Node):
             if distance_sq < fallback_distance_sq:
                 fallback_distance_sq = distance_sq
                 fallback_index = idx
+                fallback_cross_track_error = local_y
             if local_x < -1.0:
                 continue
             if distance_sq < best_distance_sq:
                 best_distance_sq = distance_sq
                 best_index = idx
+                best_cross_track_error = local_y
 
         if best_distance_sq == float('inf'):
             best_index = fallback_index
-            best_distance_sq = fallback_distance_sq
+            best_cross_track_error = fallback_cross_track_error
 
-        return best_index, math.sqrt(best_distance_sq)
+        return best_index, best_cross_track_error
+
+    def _steering_command(
+        self,
+        vehicle: Point,
+        yaw: float,
+        speed: float,
+        nearest_index: int,
+        lookahead_index: int,
+        cross_track_error: float,
+    ) -> float:
+        lookahead_point = self._path_points[lookahead_index]
+        target_x, target_y = self._to_vehicle_frame(vehicle, yaw, lookahead_point)
+        target_distance_sq = max(target_x * target_x + target_y * target_y, 1e-6)
+        curvature_to_target = 2.0 * target_y / target_distance_sq
+        pure_pursuit = math.atan(self._wheelbase * curvature_to_target)
+
+        path_heading = self._path_heading(nearest_index, lookahead_index)
+        heading_error = self._normalize_angle(path_heading - yaw)
+        cross_track_correction = math.atan2(
+            self._cross_track_gain * cross_track_error,
+            speed + self._cross_track_softening,
+        )
+        return pure_pursuit + self._heading_gain * heading_error + cross_track_correction
+
+    def _path_heading(self, nearest_index: int, lookahead_index: int) -> float:
+        start_index = self._clamp_index(nearest_index, len(self._path_points) - 1)
+        end_index = self._clamp_index(lookahead_index, len(self._path_points) - 1)
+        if end_index == start_index:
+            if start_index < len(self._path_points) - 1:
+                end_index = start_index + 1
+            elif start_index > 0:
+                start_index -= 1
+
+        start = self._path_points[start_index]
+        end = self._path_points[end_index]
+        return math.atan2(end.y - start.y, end.x - start.x)
 
     def _dynamic_lookahead(self, speed: float) -> float:
         lookahead = self._lookahead_distance + speed * self._lookahead_time
@@ -380,7 +423,8 @@ class GlobalPathFollower(Node):
                 f'Global path follower  enabled: {enabled}\n'
                 f'status: {status}\n'
                 f'target speed: {target.target_speed:.2f} m/s  curvature: {target.curvature:.3f}\n'
-                f'gas: {target.gas:.2f}  brake: {target.brake:.2f}  steer: {target.steer_angle:.2f}'
+                f'cte: {target.cross_track_error:.2f} m  steer: {target.steer_angle:.2f}\n'
+                f'gas: {target.gas:.2f}  brake: {target.brake:.2f}'
             )
         return marker
 
@@ -489,6 +533,18 @@ class GlobalPathFollower(Node):
     @staticmethod
     def _clamp(value: float, lower: float, upper: float) -> float:
         return max(lower, min(value, upper))
+
+    @staticmethod
+    def _clamp_index(index: int, max_index: int) -> int:
+        return max(0, min(index, max_index))
+
+    @staticmethod
+    def _normalize_angle(angle: float) -> float:
+        while angle > math.pi:
+            angle -= 2.0 * math.pi
+        while angle < -math.pi:
+            angle += 2.0 * math.pi
+        return angle
 
     def _now_sec(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9
