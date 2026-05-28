@@ -1,0 +1,84 @@
+# Static Inspection A profile.
+# Requirements reference: full steering sweep, ramp to 200 rpm in 10 s,
+# stop in 5 s, then declare mission complete.
+# Steering limit reference: ADS-DV_2025_CAN1.dbc AI2VCU_Steer.STEER_REQUEST [-21, 21] deg.
+
+mission: static_inspection_a
+completion_action: mission_complete
+require_stopped_before_completion: true
+stopped_rpm_threshold: 10.0
+
+steps:
+  - name: centre_steering
+    type: hold
+    duration_s: 1.0
+    command:
+      steer_angle_deg: 0.0
+      axle_speed_rpm: 0.0
+      axle_torque_nm: 0.0
+      brake_pct: 0.0
+
+  - name: sweep_to_left_lock
+    type: ramp
+    duration_s: 2.0
+    start:
+      steer_angle_deg: 0.0
+      axle_speed_rpm: 0.0
+      axle_torque_nm: 0.0
+      brake_pct: 0.0
+    end:
+      steer_angle_deg: 21.0
+      axle_speed_rpm: 0.0
+      axle_torque_nm: 0.0
+      brake_pct: 0.0
+
+  - name: sweep_to_right_lock
+    type: ramp
+    duration_s: 4.0
+    start:
+      steer_angle_deg: 21.0
+      axle_speed_rpm: 0.0
+      axle_torque_nm: 0.0
+      brake_pct: 0.0
+    end:
+      steer_angle_deg: -21.0
+      axle_speed_rpm: 0.0
+      axle_torque_nm: 0.0
+      brake_pct: 0.0
+
+  - name: return_steering_to_centre
+    type: ramp
+    duration_s: 2.0
+    start:
+      steer_angle_deg: -21.0
+      axle_speed_rpm: 0.0
+      axle_torque_nm: 0.0
+      brake_pct: 0.0
+    end:
+      steer_angle_deg: 0.0
+      axle_speed_rpm: 0.0
+      axle_torque_nm: 0.0
+      brake_pct: 0.0
+
+  - name: ramp_to_200rpm
+    type: ramp
+    duration_s: 10.0
+    start:
+      steer_angle_deg: 0.0
+      axle_speed_rpm: 0.0
+      axle_torque_nm: 10.0
+      brake_pct: 0.0
+    end:
+      steer_angle_deg: 0.0
+      axle_speed_rpm: 200.0
+      axle_torque_nm: 10.0
+      brake_pct: 0.0
+
+  - name: stop_with_brake
+    type: hold
+    duration_s: 5.0
+    command:
+      steer_angle_deg: 0.0
+      axle_speed_rpm: 0.0
+      axle_torque_nm: 0.0
+      brake_pct: 20.0
