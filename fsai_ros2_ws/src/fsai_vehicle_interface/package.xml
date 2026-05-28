@@ -21,9 +21,12 @@
 
   <!-- Runtime dependencies -->
   <depend>rclcpp</depend>
+  <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>fsai_interfaces</depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
 
   <!-- Test dependencies -->
   <test_depend>ament_lint_auto</test_depend>

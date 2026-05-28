@@ -67,8 +67,18 @@ install(TARGETS vehicle_interface_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  scripts/mission_manager
+  scripts/static_profile_executor
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 install(DIRECTORY config/
   DESTINATION share/${PROJECT_NAME}/config
+)
+
+install(DIRECTORY profiles/
+  DESTINATION share/${PROJECT_NAME}/profiles
 )
 
 install(DIRECTORY launch/

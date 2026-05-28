@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+
+"""Executes YAML-defined static inspection drive profiles."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import rclpy
+import yaml
+from ament_index_python.packages import get_package_share_directory
+from rclpy.node import Node
+
+from fsai_interfaces.msg import DriveCommand, InterfaceState, WheelSpeeds
+from std_msgs.msg import Bool, String
+
+
+COMMAND_FIELDS = ('steer_angle_deg', 'axle_speed_rpm', 'axle_torque_nm', 'brake_pct')
+
+
+class StaticProfileExecutor(Node):
+    """Publishes static inspection candidate commands for the mission manager."""
+
+    def __init__(self) -> None:
+        super().__init__('static_profile_executor')
+
+        self.declare_parameter('publish_rate_hz', 50.0)
+        self.declare_parameter('profile_directory', '')
+
+        publish_rate_hz = max(1.0, float(self.get_parameter('publish_rate_hz').value))
+        profile_directory = str(self.get_parameter('profile_directory').value)
+        if profile_directory:
+            self._profile_dir = Path(profile_directory)
+        else:
+            package_share = Path(get_package_share_directory('fsai_vehicle_interface'))
+            self._profile_dir = package_share / 'profiles'
+
+        self._mission = 'none'
+        self._profile: dict | None = None
+        self._profile_path: Path | None = None
+        self._interface_state = InterfaceState.WAIT_FOR_VCU
+        self._wheel_speeds: WheelSpeeds | None = None
+        self._start_sec: float | None = None
+        self._completed = False
+        self._last_command: dict[str, float] | None = None
+        self._waiting_for_stop_logged = False
+
+        self.create_subscription(String, '/mission/selected', self._on_mission_selected, 10)
+        self.create_subscription(InterfaceState, '/vehicle/interface_state', self._on_interface_state, 10)
+        self.create_subscription(WheelSpeeds, '/vcu/wheel_speeds', self._on_wheel_speeds, 10)
+
+        self._drive_pub = self.create_publisher(DriveCommand, '/static_drive_command', 10)
+        self._mission_complete_pub = self.create_publisher(Bool, '/static_mission_complete', 10)
+        self._estop_pub = self.create_publisher(Bool, '/static_estop', 10)
+        self.create_timer(1.0 / publish_rate_hz, self._tick)
+
+        self.get_logger().info(f'Static profile executor using profiles from {self._profile_dir}')
+
+    def _on_mission_selected(self, msg: String) -> None:
+        mission = msg.data.strip()
+        if mission == self._mission:
+            return
+
+        self._reset_profile_state()
+        self._mission = mission
+        if mission == 'static_inspection_a':
+            self._load_profile('static_inspection_a.yaml')
+        elif mission == 'static_inspection_b':
+            self._load_profile('static_inspection_b.yaml')
+        else:
+            self._profile = None
+            self._profile_path = None
+
+    def _on_interface_state(self, msg: InterfaceState) -> None:
+        self._interface_state = int(msg.state)
+
+    def _on_wheel_speeds(self, msg: WheelSpeeds) -> None:
+        self._wheel_speeds = msg
+
+    def _tick(self) -> None:
+        if self._profile is None or self._completed:
+            return
+        if self._interface_state != InterfaceState.DRIVING:
+            if self._start_sec is not None:
+                self.get_logger().warn('Static profile paused because interface is no longer DRIVING')
+            self._start_sec = None
+            return
+
+        now_sec = self._now_sec()
+        if self._start_sec is None:
+            self._start_sec = now_sec
+            self.get_logger().info(f'Starting static profile: {self._profile_path.name}')
+
+        elapsed_sec = now_sec - self._start_sec
+        command = self._command_at(elapsed_sec)
+        if command is not None:
+            self._last_command = command
+            self._publish_drive_command(command)
+            return
+
+        self._complete_profile()
+
+    def _load_profile(self, filename: str) -> None:
+        path = self._profile_dir / filename
+        with path.open('r', encoding='utf-8') as handle:
+            profile = yaml.safe_load(handle) or {}
+
+        if not isinstance(profile.get('steps'), list) or not profile['steps']:
+            raise ValueError(f'Profile {path} must define a non-empty steps list')
+
+        self._profile = profile
+        self._profile_path = path
+        self.get_logger().info(f'Loaded static profile {path}')
+
+    def _reset_profile_state(self) -> None:
+        self._start_sec = None
+        self._completed = False
+        self._last_command = None
+        self._waiting_for_stop_logged = False
+
+    def _command_at(self, elapsed_sec: float) -> dict[str, float] | None:
+        assert self._profile is not None
+
+        cursor = 0.0
+        for step in self._profile['steps']:
+            duration = max(0.0, float(step.get('duration_s', 0.0)))
+            if elapsed_sec <= cursor + duration:
+                ratio = 1.0 if duration <= 1e-6 else (elapsed_sec - cursor) / duration
+                return self._step_command(step, self._clamp(ratio, 0.0, 1.0))
+            cursor += duration
+
+        return None
+
+    def _step_command(self, step: dict, ratio: float) -> dict[str, float]:
+        step_type = str(step.get('type', 'hold')).lower()
+        if step_type == 'ramp':
+            start = self._command_dict(step.get('start', {}))
+            end = self._command_dict(step.get('end', {}))
+            return {
+                field: start[field] + ratio * (end[field] - start[field])
+                for field in COMMAND_FIELDS
+            }
+        return self._command_dict(step.get('command', {}))
+
+    def _complete_profile(self) -> None:
+        assert self._profile is not None
+
+        action = str(self._profile.get('completion_action', 'mission_complete')).lower()
+        if action == 'mission_complete' and self._must_wait_for_stop():
+            if self._last_command is not None:
+                self._publish_drive_command(self._last_command)
+            if not self._waiting_for_stop_logged:
+                self.get_logger().info('Profile complete; waiting for wheel speeds below stop threshold')
+                self._waiting_for_stop_logged = True
+            return
+
+        if action == 'estop':
+            self.get_logger().warn('Static profile complete; requesting software E-stop')
+            self._estop_pub.publish(Bool(data=True))
+        else:
+            self.get_logger().info('Static profile complete; requesting mission complete')
+            self._mission_complete_pub.publish(Bool(data=True))
+
+        self._completed = True
+
+    def _must_wait_for_stop(self) -> bool:
+        assert self._profile is not None
+        if not bool(self._profile.get('require_stopped_before_completion', False)):
+            return False
+        if self._wheel_speeds is None:
+            return True
+
+        threshold = float(self._profile.get('stopped_rpm_threshold', 10.0))
+        speeds = [
+            self._wheel_speeds.fl_rpm,
+            self._wheel_speeds.fr_rpm,
+            self._wheel_speeds.rl_rpm,
+            self._wheel_speeds.rr_rpm,
+        ]
+        return any(abs(speed) > threshold for speed in speeds)
+
+    def _publish_drive_command(self, command: dict[str, float]) -> None:
+        msg = DriveCommand()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.steer_angle_deg = float(command['steer_angle_deg'])
+        msg.axle_speed_rpm = max(0.0, float(command['axle_speed_rpm']))
+        msg.axle_torque_nm = max(0.0, float(command['axle_torque_nm']))
+        msg.brake_pct = self._clamp(float(command['brake_pct']), 0.0, 100.0)
+        if msg.brake_pct > 0.0:
+            msg.axle_torque_nm = 0.0
+        self._drive_pub.publish(msg)
+
+    @staticmethod
+    def _command_dict(raw: dict) -> dict[str, float]:
+        return {field: float(raw.get(field, 0.0)) for field in COMMAND_FIELDS}
+
+    @staticmethod
+    def _clamp(value: float, lower: float, upper: float) -> float:
+        return max(lower, min(value, upper))
+
+    def _now_sec(self) -> float:
+        return self.get_clock().now().nanoseconds / 1e9
+
+
+def main(args: list[str] | None = None) -> None:
+    rclpy.init(args=args)
+    node = StaticProfileExecutor()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
