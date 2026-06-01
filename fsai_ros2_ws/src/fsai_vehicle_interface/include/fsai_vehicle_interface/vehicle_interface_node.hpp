@@ -56,7 +56,9 @@ private:
   bool api_initialized_{false};
   bool has_vcu_status_{false};
   bool mission_complete_received_{false};
-  bool estop_requested_{false};           // latched — once true, never cleared
+  bool estop_requested_{false};
+  bool estop_emergency_confirmed_{false};  // true once VCU reports AS_EMERGENCY_BRAKE after ESTOP sent
+  rclcpp::Time estop_clear_time_;          // monotonic deadline to drop the latch
   rclcpp::Time last_drive_command_time_;
   fsai_interfaces::msg::DriveCommand::SharedPtr latest_drive_command_;
 

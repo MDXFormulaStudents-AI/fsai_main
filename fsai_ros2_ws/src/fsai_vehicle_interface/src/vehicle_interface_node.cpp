@@ -140,7 +140,26 @@ void VehicleInterfaceNode::timer_callback()
   // ── 4. Publish interface state ────────────────────────────────────────────
   publish_interface_state();
 
-  // ── 5. Build and send AI2VCU command ─────────────────────────────────────
+  // ── 5. Auto-clear ESTOP latch 1s after VCU confirms AS_EMERGENCY_BRAKE ──────
+  // Prevents deadlock: if the latch stayed true through a VCU power cycle,
+  // the VCU would re-enter EMERGENCY immediately on reboot before AS_OFF is seen.
+  if (estop_requested_) {
+    if (vcu2ai_data.VCU2AI_AS_STATE == AS_EMERGENCY_BRAKE) {
+      if (!estop_emergency_confirmed_) {
+        estop_emergency_confirmed_ = true;
+        estop_clear_time_ = this->now() + rclcpp::Duration::from_seconds(1.0);
+        RCLCPP_WARN(this->get_logger(),
+          "VCU AS_EMERGENCY_BRAKE confirmed — ESTOP latch will drop in 1s");
+      } else if (this->now() >= estop_clear_time_) {
+        estop_requested_            = false;
+        estop_emergency_confirmed_  = false;
+        RCLCPP_WARN(this->get_logger(),
+          "ESTOP latch cleared — ESTOP_NO now on wire; safe to power-cycle VCU");
+      }
+    }
+  }
+
+  // ── 6. Build and send AI2VCU command ─────────────────────────────────────
   fs_ai_api_ai2vcu ai2vcu = {};
 
   // Handshake: mirror what the VCU sends

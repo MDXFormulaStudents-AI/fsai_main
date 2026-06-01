@@ -57,6 +57,7 @@ class StaticProfileExecutor(Node):
         self._step_start_distance_m: float = 0.0
         self._total_distance_m: float = 0.0
         self._last_odometry_sec: float | None = None
+        self._last_distance_log_sec: float | None = None
 
         self.create_subscription(String, '/mission/selected', self._on_mission_selected, 10)
         self.create_subscription(
@@ -153,6 +154,20 @@ class StaticProfileExecutor(Node):
                 return
             step = steps[self._current_step_idx]
             elapsed_in_step = 0.0
+            self._last_distance_log_sec = None  # log immediately on entering new step
+
+        # Throttled progress log for distance steps (once per second)
+        if str(step.get('type', 'hold')).lower() == 'distance':
+            if (self._last_distance_log_sec is None or
+                    now_sec - self._last_distance_log_sec >= 1.0):
+                target_m = float(step.get('distance_m', 0.0))
+                step_name = step.get('name', f'step_{self._current_step_idx}')
+                wheels_ok = self._wheel_speeds is not None
+                self.get_logger().info(
+                    f'[distance] {step_name}: {distance_in_step:.2f} / {target_m:.1f} m'
+                    f'  (wheel data: {"ok" if wheels_ok else "MISSING"})'
+                )
+                self._last_distance_log_sec = now_sec
 
         command = self._command_for_step(step, elapsed_in_step)
         self._last_command = command
@@ -221,6 +236,7 @@ class StaticProfileExecutor(Node):
         self._step_start_distance_m = 0.0
         self._total_distance_m = 0.0
         self._last_odometry_sec = None
+        self._last_distance_log_sec = None
 
     def _complete_profile(self) -> None:
         assert self._profile is not None

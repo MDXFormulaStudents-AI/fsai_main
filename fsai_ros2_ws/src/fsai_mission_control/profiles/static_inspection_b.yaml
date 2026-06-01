@@ -11,12 +11,12 @@ steps:
     start:
       steer_angle_deg: 0.0
       axle_speed_rpm: 0.0
-      axle_torque_nm: 500.0
+      axle_torque_nm: 1000.0
       brake_pct: 0.0
     end:
       steer_angle_deg: 0.0
-      axle_speed_rpm: 50.0
-      axle_torque_nm: 500.0
+      axle_speed_rpm: 500.0
+      axle_torque_nm: 1000.0
       brake_pct: 0.0
 
   - name: hold_50rpm
@@ -24,6 +24,6 @@ steps:
     duration_s: 5.0
     command:
       steer_angle_deg: 0.0
-      axle_speed_rpm: 50.0
-      axle_torque_nm: 500.0
+      axle_speed_rpm: 500.0
+      axle_torque_nm: 1000.0
       brake_pct: 0.0
