@@ -56,13 +56,13 @@ class MissionManager(Node):
         self.create_timer(1.0 / publish_rate_hz, self._publish_selected_mission)
 
         self.get_logger().info(
-            'Mission manager started; forwarding static commands only for Static A/B missions'
+            '── Mission Manager ready  (Static A / Static B / Autonomous Demo) ──'
         )
 
     def _on_vcu_status(self, msg: VcuStatus) -> None:
         mission = self._mission_name(msg.ami_state)
         if mission != self._selected_mission:
-            self.get_logger().info(f'Mission selected: {self._selected_mission} -> {mission}')
+            self.get_logger().info(f'Mission:  {self._selected_mission}  -->  {mission}')
             self._selected_mission = mission
             self._publish_selected_mission()
 
@@ -79,20 +79,20 @@ class MissionManager(Node):
     def _on_static_mission_complete(self, msg: Bool) -> None:
         if not msg.data or not self._static_mission_active():
             return
-        self.get_logger().info('Forwarding static mission complete signal')
+        self.get_logger().info('Mission complete forwarded to vehicle interface')
         self._mission_complete_pub.publish(Bool(data=True))
 
     def _on_static_estop(self, msg: Bool) -> None:
-        if not msg.data or self._selected_mission != 'static_inspection_b':
+        if not msg.data or self._selected_mission not in ('static_inspection_b', 'autonomous_demo'):
             return
-        self.get_logger().warn('Forwarding Static B software E-stop request')
+        self.get_logger().warn('!! Software E-stop forwarded to vehicle interface !!')
         self._estop_pub.publish(Bool(data=True))
 
     def _publish_selected_mission(self) -> None:
         self._mission_pub.publish(String(data=self._selected_mission))
 
     def _static_mission_active(self) -> bool:
-        return self._selected_mission in ('static_inspection_a', 'static_inspection_b')
+        return self._selected_mission in ('static_inspection_a', 'static_inspection_b', 'autonomous_demo')
 
     @staticmethod
     def _mission_name(ami_state: int) -> str:

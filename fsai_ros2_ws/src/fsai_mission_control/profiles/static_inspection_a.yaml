@@ -66,12 +66,12 @@ steps:
     start:
       steer_angle_deg: 0.0
       axle_speed_rpm: 0.0
-      axle_torque_nm: 10.0
+      axle_torque_nm: 50.0
       brake_pct: 0.0
     end:
       steer_angle_deg: 0.0
       axle_speed_rpm: 200.0
-      axle_torque_nm: 10.0
+      axle_torque_nm: 50.0
       brake_pct: 0.0
 
   - name: stop_with_brake

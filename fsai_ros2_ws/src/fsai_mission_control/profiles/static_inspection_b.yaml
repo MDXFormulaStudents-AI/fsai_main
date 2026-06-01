@@ -7,23 +7,23 @@ completion_action: estop
 steps:
   - name: ramp_to_50rpm
     type: ramp
-    duration_s: 3.0
+    duration_s: 10.0
     start:
       steer_angle_deg: 0.0
       axle_speed_rpm: 0.0
-      axle_torque_nm: 8.0
+      axle_torque_nm: 500.0
       brake_pct: 0.0
     end:
       steer_angle_deg: 0.0
       axle_speed_rpm: 50.0
-      axle_torque_nm: 8.0
+      axle_torque_nm: 500.0
       brake_pct: 0.0
 
   - name: hold_50rpm
     type: hold
-    duration_s: 2.0
+    duration_s: 5.0
     command:
       steer_angle_deg: 0.0
       axle_speed_rpm: 50.0
-      axle_torque_nm: 8.0
+      axle_torque_nm: 500.0
       brake_pct: 0.0

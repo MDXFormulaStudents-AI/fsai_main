@@ -19,6 +19,7 @@ def generate_launch_description():
         name='static_profile_executor',
         output='screen',
         emulate_tty=True,
+        parameters=[{'wheel_circumference_m': 1.674}],
     )
 
     return LaunchDescription([

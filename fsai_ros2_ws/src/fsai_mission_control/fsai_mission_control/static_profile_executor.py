@@ -24,12 +24,17 @@ class StaticProfileExecutor(Node):
 
         self.declare_parameter('publish_rate_hz', 50.0)
         self.declare_parameter('profile_directory', '')
+        self.declare_parameter('wheel_circumference_m', 1.4)
 
         publish_rate_hz = max(
             1.0,
             self.get_parameter('publish_rate_hz').get_parameter_value().double_value,
         )
         profile_directory = self.get_parameter('profile_directory').get_parameter_value().string_value
+        self._wheel_circumference_m = (
+            self.get_parameter('wheel_circumference_m').get_parameter_value().double_value
+        )
+
         if profile_directory:
             self._profile_dir = Path(profile_directory)
         else:
@@ -41,10 +46,17 @@ class StaticProfileExecutor(Node):
         self._profile_path: Path | None = None
         self._interface_state = InterfaceState.WAIT_FOR_VCU
         self._wheel_speeds: WheelSpeeds | None = None
-        self._start_sec: float | None = None
         self._completed = False
         self._last_command: dict[str, float] | None = None
         self._waiting_for_stop_logged = False
+
+        # Per-step tracking — supports both duration_s and distance_m step types
+        self._start_sec: float | None = None
+        self._current_step_idx: int = 0
+        self._step_start_sec: float | None = None
+        self._step_start_distance_m: float = 0.0
+        self._total_distance_m: float = 0.0
+        self._last_odometry_sec: float | None = None
 
         self.create_subscription(String, '/mission/selected', self._on_mission_selected, 10)
         self.create_subscription(
@@ -60,7 +72,10 @@ class StaticProfileExecutor(Node):
         self._estop_pub = self.create_publisher(Bool, '/static_estop', 10)
         self.create_timer(1.0 / publish_rate_hz, self._tick)
 
-        self.get_logger().info(f'Static profile executor using profiles from {self._profile_dir}')
+        profile_dir_display = f'.../{self._profile_dir.parent.name}/{self._profile_dir.name}'
+        self.get_logger().info(f'── Static Profile Executor ready ── profiles: {profile_dir_display}')
+
+    # ── Subscriptions ─────────────────────────────────────────────────────────
 
     def _on_mission_selected(self, msg: String) -> None:
         mission = msg.data.strip()
@@ -73,6 +88,8 @@ class StaticProfileExecutor(Node):
             self._load_profile('static_inspection_a.yaml')
         elif mission == 'static_inspection_b':
             self._load_profile('static_inspection_b.yaml')
+        elif mission == 'autonomous_demo':
+            self._load_profile('autonomous_demo.yaml')
         else:
             self._profile = None
             self._profile_path = None
@@ -83,29 +100,101 @@ class StaticProfileExecutor(Node):
     def _on_wheel_speeds(self, msg: WheelSpeeds) -> None:
         self._wheel_speeds = msg
 
+    # ── Main tick ─────────────────────────────────────────────────────────────
+
     def _tick(self) -> None:
         if self._profile is None or self._completed:
             return
         if self._interface_state != InterfaceState.DRIVING:
             if self._start_sec is not None:
-                self.get_logger().warn('Static profile paused because interface is no longer DRIVING')
-            self._start_sec = None
+                self.get_logger().warn('Profile PAUSED -- interface left DRIVING. Will restart from beginning on re-entry.')
+            self._reset_step_state()
             return
 
         now_sec = self._now_sec()
+
         if self._start_sec is None:
             self._start_sec = now_sec
+            self._step_start_sec = now_sec
+            self._step_start_distance_m = 0.0
+            self._total_distance_m = 0.0
+            self._last_odometry_sec = now_sec
+            self._current_step_idx = 0
             profile_name = self._profile_path.name if self._profile_path else '<unknown>'
-            self.get_logger().info(f'Starting static profile: {profile_name}')
+            self.get_logger().info(f'-------- Profile START: {profile_name} --------')
 
-        elapsed_sec = now_sec - self._start_sec
-        command = self._command_at(elapsed_sec)
-        if command is not None:
-            self._last_command = command
-            self._publish_drive_command(command)
+        self._update_odometry(now_sec)
+
+        steps = self._profile['steps']
+        if self._current_step_idx >= len(steps):
+            self._complete_profile()
             return
 
-        self._complete_profile()
+        step = steps[self._current_step_idx]
+        elapsed_in_step = now_sec - self._step_start_sec
+        distance_in_step = self._total_distance_m - self._step_start_distance_m
+
+        if self._step_complete(step, elapsed_in_step, distance_in_step):
+            step_name = step.get('name', f'step_{self._current_step_idx}')
+            step_num = self._current_step_idx + 1
+            total_steps = len(steps)
+            step_type = str(step.get('type', 'hold')).lower()
+            detail = (
+                f'{distance_in_step:.2f}m in {elapsed_in_step:.2f}s'
+                if step_type == 'distance'
+                else f'{elapsed_in_step:.2f}s'
+            )
+            self.get_logger().info(f'[{step_num}/{total_steps}] {step_name}  done  ({detail})')
+            self._current_step_idx += 1
+            self._step_start_sec = now_sec
+            self._step_start_distance_m = self._total_distance_m
+            if self._current_step_idx >= len(steps):
+                self._complete_profile()
+                return
+            step = steps[self._current_step_idx]
+            elapsed_in_step = 0.0
+
+        command = self._command_for_step(step, elapsed_in_step)
+        self._last_command = command
+        self._publish_drive_command(command)
+
+    # ── Step logic ────────────────────────────────────────────────────────────
+
+    def _step_complete(
+        self, step: dict, elapsed_in_step: float, distance_in_step: float
+    ) -> bool:
+        step_type = str(step.get('type', 'hold')).lower()
+        if step_type == 'distance':
+            return distance_in_step >= float(step.get('distance_m', 0.0))
+        return elapsed_in_step >= max(0.0, float(step.get('duration_s', 0.0)))
+
+    def _command_for_step(self, step: dict, elapsed_in_step: float) -> dict[str, float]:
+        step_type = str(step.get('type', 'hold')).lower()
+        if step_type == 'ramp':
+            duration = max(1e-6, float(step.get('duration_s', 1.0)))
+            ratio = self._clamp(elapsed_in_step / duration, 0.0, 1.0)
+            start = self._command_dict(step.get('start', {}))
+            end = self._command_dict(step.get('end', {}))
+            return {
+                field: start[field] + ratio * (end[field] - start[field])
+                for field in COMMAND_FIELDS
+            }
+        return self._command_dict(step.get('command', {}))
+
+    # ── Odometry ──────────────────────────────────────────────────────────────
+
+    def _update_odometry(self, now_sec: float) -> None:
+        if self._last_odometry_sec is None:
+            self._last_odometry_sec = now_sec
+            return
+        if self._wheel_speeds is None:
+            return
+        dt = now_sec - self._last_odometry_sec
+        self._last_odometry_sec = now_sec
+        avg_rpm = (abs(self._wheel_speeds.rl_rpm) + abs(self._wheel_speeds.rr_rpm)) / 2.0
+        self._total_distance_m += (avg_rpm / 60.0) * self._wheel_circumference_m * dt
+
+    # ── Profile loading and completion ────────────────────────────────────────
 
     def _load_profile(self, filename: str) -> None:
         path = self._profile_dir / filename
@@ -117,37 +206,21 @@ class StaticProfileExecutor(Node):
 
         self._profile = profile
         self._profile_path = path
-        self.get_logger().info(f'Loaded static profile {path}')
+        self.get_logger().info(f'Profile loaded: {path.name}')
 
     def _reset_profile_state(self) -> None:
-        self._start_sec = None
+        self._reset_step_state()
         self._completed = False
         self._last_command = None
         self._waiting_for_stop_logged = False
 
-    def _command_at(self, elapsed_sec: float) -> dict[str, float] | None:
-        assert self._profile is not None
-
-        cursor = 0.0
-        for step in self._profile['steps']:
-            duration = max(0.0, float(step.get('duration_s', 0.0)))
-            if elapsed_sec <= cursor + duration:
-                ratio = 1.0 if duration <= 1e-6 else (elapsed_sec - cursor) / duration
-                return self._step_command(step, self._clamp(ratio, 0.0, 1.0))
-            cursor += duration
-
-        return None
-
-    def _step_command(self, step: dict, ratio: float) -> dict[str, float]:
-        step_type = str(step.get('type', 'hold')).lower()
-        if step_type == 'ramp':
-            start = self._command_dict(step.get('start', {}))
-            end = self._command_dict(step.get('end', {}))
-            return {
-                field: start[field] + ratio * (end[field] - start[field])
-                for field in COMMAND_FIELDS
-            }
-        return self._command_dict(step.get('command', {}))
+    def _reset_step_state(self) -> None:
+        self._start_sec = None
+        self._current_step_idx = 0
+        self._step_start_sec = None
+        self._step_start_distance_m = 0.0
+        self._total_distance_m = 0.0
+        self._last_odometry_sec = None
 
     def _complete_profile(self) -> None:
         assert self._profile is not None
@@ -157,15 +230,16 @@ class StaticProfileExecutor(Node):
             if self._last_command is not None:
                 self._publish_drive_command(self._last_command)
             if not self._waiting_for_stop_logged:
-                self.get_logger().info('Profile complete; waiting for wheel speeds below stop threshold')
+                threshold = float(self._profile.get('stopped_rpm_threshold', 10.0))
+                self.get_logger().info(f'All steps done -- waiting for wheels to stop (< {threshold:.0f} rpm)...')
                 self._waiting_for_stop_logged = True
             return
 
         if action == 'estop':
-            self.get_logger().warn('Static profile complete; requesting software E-stop')
+            self.get_logger().warn('!! Profile COMPLETE --> SOFTWARE E-STOP REQUESTED !!')
             self._estop_pub.publish(Bool(data=True))
         else:
-            self.get_logger().info('Static profile complete; requesting mission complete')
+            self.get_logger().info('-------- Profile COMPLETE --> mission complete signal sent --------')
             self._mission_complete_pub.publish(Bool(data=True))
 
         self._completed = True
@@ -186,6 +260,8 @@ class StaticProfileExecutor(Node):
         ]
         return any(abs(speed) > threshold for speed in speeds)
 
+    # ── Publishing ────────────────────────────────────────────────────────────
+
     def _publish_drive_command(self, command: dict[str, float]) -> None:
         msg = DriveCommand()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -196,6 +272,8 @@ class StaticProfileExecutor(Node):
         if msg.brake_pct > 0.0:
             msg.axle_torque_nm = 0.0
         self._drive_pub.publish(msg)
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     @staticmethod
     def _command_dict(raw: dict) -> dict[str, float]:
