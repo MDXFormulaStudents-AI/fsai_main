@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>fsai_sensors_bringup</name>
+  <version>0.1.0</version>
+  <description>MDX FSAI sensor bringup — ZED2 stereo camera and LiDAR</description>
+  <maintainer email="shuaibuoluwatunmise@gmail.com">MDX FSAI</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <exec_depend>zed_wrapper</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
