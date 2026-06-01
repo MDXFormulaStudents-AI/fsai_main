@@ -1,0 +1,15 @@
+[Unit]
+Description=FSAI CAN Interface (can2 — PEAK PCAN-USB)
+# Wait for the can2 network device to appear before running
+After=sys-subsystem-net-devices-can2.device
+Requires=sys-subsystem-net-devices-can2.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/ip link set can2 up type can bitrate 500000
+ExecStart=/sbin/ip link set can2 txqueuelen 1000
+ExecStop=/sbin/ip link set can2 down
+
+[Install]
+WantedBy=multi-user.target
