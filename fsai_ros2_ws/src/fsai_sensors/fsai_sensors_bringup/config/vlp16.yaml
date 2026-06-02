@@ -1,0 +1,19 @@
+# Velodyne VLP-16 driver and pointcloud parameters
+# Loaded by sensors.launch.py — edit here, no launch file changes needed.
+
+velodyne_driver:
+  ros__parameters:
+    device_ip: "192.168.1.201"   # LiDAR default — change if reconfigured via web UI
+    port: 2368
+    model: "VLP16"
+    rpm: 600.0                   # 600 RPM = 10 Hz scan rate
+    frame_id: "velodyne"
+
+velodyne_pointcloud:
+  ros__parameters:
+    model: "VLP16"
+    calibration: "/opt/ros/humble/share/velodyne_pointcloud/params/VLP16db.yaml"
+    min_range: 0.4               # metres — ignore returns closer than this (avoids car body hits)
+    max_range: 100.0             # metres — VLP-16 max effective range
+    view_direction: 0.0          # radians — 0 = forward, π = rear
+    view_width: 3.14159          # radians — π = 180° forward-facing FOV

@@ -2,6 +2,7 @@
 
 import os
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
@@ -11,7 +12,16 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
+def _load_mounts(config_dir: str) -> dict:
+    with open(os.path.join(config_dir, 'sensor_mounts.yaml')) as f:
+        return yaml.safe_load(f)
+
+
 def generate_launch_description():
+    pkg = get_package_share_directory('fsai_sensors_bringup')
+    config_dir = os.path.join(pkg, 'config')
+    mounts = _load_mounts(config_dir)
+
     enable_camera_arg = DeclareLaunchArgument(
         'enable_camera',
         default_value='true',
@@ -30,12 +40,7 @@ def generate_launch_description():
         description='ZED camera model (zed, zedm, zed2, zed2i, zedx, zedxm)',
     )
 
-    lidar_ip_arg = DeclareLaunchArgument(
-        'lidar_ip',
-        default_value='192.168.1.201',
-        description='IP address of the VLP-16 LiDAR',
-    )
-
+    # ── ZED2 camera ───────────────────────────────────────────────────────────
     zed_launch = GroupAction(
         condition=IfCondition(LaunchConfiguration('enable_camera')),
         actions=[
@@ -54,18 +59,32 @@ def generate_launch_description():
         ],
     )
 
+    zed_tf = Node(
+        condition=IfCondition(LaunchConfiguration('enable_camera')),
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='zed2_tf',
+        arguments=[
+            '--x', str(mounts['zed2']['x']),
+            '--y', str(mounts['zed2']['y']),
+            '--z', str(mounts['zed2']['z']),
+            '--yaw', str(mounts['zed2']['yaw']),
+            '--pitch', str(mounts['zed2']['pitch']),
+            '--roll', str(mounts['zed2']['roll']),
+            '--frame-id', mounts['zed2']['parent_frame'],
+            '--child-frame-id', mounts['zed2']['child_frame'],
+        ],
+    )
+
+    # ── Velodyne VLP-16 LiDAR ─────────────────────────────────────────────────
+    vlp16_params = os.path.join(config_dir, 'vlp16.yaml')
+
     velodyne_driver = Node(
         condition=IfCondition(LaunchConfiguration('enable_lidar')),
         package='velodyne_driver',
         executable='velodyne_driver_node',
         name='velodyne_driver',
-        parameters=[{
-            'device_ip': LaunchConfiguration('lidar_ip'),
-            'port': 2368,
-            'model': 'VLP16',
-            'rpm': 600.0,
-            'frame_id': 'velodyne',
-        }],
+        parameters=[vlp16_params],
     )
 
     velodyne_pointcloud = Node(
@@ -73,24 +92,33 @@ def generate_launch_description():
         package='velodyne_pointcloud',
         executable='velodyne_transform_node',
         name='velodyne_pointcloud',
-        parameters=[{
-            'model': 'VLP16',
-            'calibration': os.path.join(
-                get_package_share_directory('velodyne_pointcloud'),
-                'params',
-                'VLP16db.yaml',
-            ),
-            'min_range': 0.4,
-            'max_range': 100.0,
-        }],
+        parameters=[vlp16_params],
+    )
+
+    velodyne_tf = Node(
+        condition=IfCondition(LaunchConfiguration('enable_lidar')),
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='velodyne_tf',
+        arguments=[
+            '--x', str(mounts['velodyne']['x']),
+            '--y', str(mounts['velodyne']['y']),
+            '--z', str(mounts['velodyne']['z']),
+            '--yaw', str(mounts['velodyne']['yaw']),
+            '--pitch', str(mounts['velodyne']['pitch']),
+            '--roll', str(mounts['velodyne']['roll']),
+            '--frame-id', mounts['velodyne']['parent_frame'],
+            '--child-frame-id', mounts['velodyne']['child_frame'],
+        ],
     )
 
     return LaunchDescription([
         enable_camera_arg,
         enable_lidar_arg,
         camera_model_arg,
-        lidar_ip_arg,
         zed_launch,
+        zed_tf,
         velodyne_driver,
         velodyne_pointcloud,
+        velodyne_tf,
     ])

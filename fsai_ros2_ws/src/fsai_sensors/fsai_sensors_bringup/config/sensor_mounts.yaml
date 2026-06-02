@@ -1,0 +1,36 @@
+# Sensor mounting positions relative to base_link
+#
+# base_link convention (ROS REP-105):
+#   - origin: centre of rear axle at ground level
+#   - x: forward, y: left, z: up
+#
+# HOW TO FILL IN:
+#   Physically measure from the rear axle centre (ground level) to each
+#   sensor's reference point and fill in x/y/z in metres.
+#   Roll/pitch/yaw in radians — use 0.0 if sensor is mounted level/forward-facing.
+#
+# IMPORTANT: All values below are PLACEHOLDER ZEROS.
+#            The system will build and run but point clouds / camera frames
+#            will appear at the car origin until real values are entered.
+
+velodyne:
+  parent_frame: "base_link"
+  child_frame: "velodyne"
+  # TODO: measure and fill in real mounting position
+  x: 0.0       # forward from rear axle (m)
+  y: 0.0       # lateral offset — 0 if centred (m)
+  z: 0.0       # height above ground (m)
+  roll: 0.0    # rotation about x (rad)
+  pitch: 0.0   # rotation about y (rad)
+  yaw: 0.0     # rotation about z — 0 if pointing forward (rad)
+
+zed2:
+  parent_frame: "base_link"
+  child_frame: "zed_camera_center"
+  # TODO: measure and fill in real mounting position
+  x: 0.0
+  y: 0.0
+  z: 0.0
+  roll: 0.0
+  pitch: 0.0
+  yaw: 0.0
