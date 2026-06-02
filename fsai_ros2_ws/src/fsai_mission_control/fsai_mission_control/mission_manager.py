@@ -1,0 +1,128 @@
+"""Mission supervisor for selecting which command source may drive the ADS-DV."""
+
+from __future__ import annotations
+
+import rclpy
+from rclpy.node import Node
+
+from fsai_interfaces.msg import DriveCommand, InterfaceState, VcuStatus
+from std_msgs.msg import Bool, String
+
+
+class MissionManager(Node):
+    """Routes mission-specific candidate commands to fsai_vehicle_interface."""
+
+    def __init__(self) -> None:
+        super().__init__('mission_manager')
+
+        self.declare_parameter('publish_rate_hz', 10.0)
+
+        publish_rate_hz = max(
+            1.0,
+            self.get_parameter('publish_rate_hz').get_parameter_value().double_value,
+        )
+        self._selected_mission = 'none'
+        self._interface_state = InterfaceState.WAIT_FOR_VCU
+
+        self.create_subscription(VcuStatus, '/vcu/status', self._on_vcu_status, 10)
+        self.create_subscription(
+            InterfaceState,
+            '/vehicle/interface_state',
+            self._on_interface_state,
+            10,
+        )
+        self.create_subscription(
+            DriveCommand,
+            '/static_drive_command',
+            self._on_static_drive_command,
+            10,
+        )
+        self.create_subscription(
+            Bool,
+            '/static_mission_complete',
+            self._on_static_mission_complete,
+            10,
+        )
+        self.create_subscription(Bool, '/static_estop', self._on_static_estop, 10)
+
+        self._mission_pub = self.create_publisher(String, '/mission/selected', 10)
+        self._drive_pub = self.create_publisher(DriveCommand, '/vehicle/drive_command', 10)
+        self._mission_complete_pub = self.create_publisher(
+            Bool,
+            '/vehicle/mission_complete',
+            10,
+        )
+        self._estop_pub = self.create_publisher(Bool, '/vehicle/estop', 10)
+        self.create_timer(1.0 / publish_rate_hz, self._publish_selected_mission)
+
+        self.get_logger().info(
+            '── Mission Manager ready  (Static A / Static B / Autonomous Demo) ──'
+        )
+
+    def _on_vcu_status(self, msg: VcuStatus) -> None:
+        mission = self._mission_name(msg.ami_state)
+        if mission != self._selected_mission:
+            self.get_logger().info(f'Mission:  {self._selected_mission}  -->  {mission}')
+            self._selected_mission = mission
+            self._publish_selected_mission()
+
+    def _on_interface_state(self, msg: InterfaceState) -> None:
+        self._interface_state = int(msg.state)
+
+    def _on_static_drive_command(self, msg: DriveCommand) -> None:
+        if not self._static_mission_active():
+            return
+        if self._interface_state != InterfaceState.DRIVING:
+            return
+        self._drive_pub.publish(msg)
+
+    def _on_static_mission_complete(self, msg: Bool) -> None:
+        if not msg.data or not self._static_mission_active():
+            return
+        self.get_logger().info('Mission complete forwarded to vehicle interface')
+        self._mission_complete_pub.publish(Bool(data=True))
+
+    def _on_static_estop(self, msg: Bool) -> None:
+        if not msg.data or self._selected_mission not in ('static_inspection_b', 'autonomous_demo'):
+            return
+        self.get_logger().warn('!! Software E-stop forwarded to vehicle interface !!')
+        self._estop_pub.publish(Bool(data=True))
+
+    def _publish_selected_mission(self) -> None:
+        self._mission_pub.publish(String(data=self._selected_mission))
+
+    def _static_mission_active(self) -> bool:
+        return self._selected_mission in ('static_inspection_a', 'static_inspection_b', 'autonomous_demo')
+
+    @staticmethod
+    def _mission_name(ami_state: int) -> str:
+        names = {
+            VcuStatus.AMI_NOT_SELECTED: 'none',
+            VcuStatus.AMI_ACCELERATION: 'acceleration',
+            VcuStatus.AMI_SKIDPAD: 'skidpad',
+            VcuStatus.AMI_AUTOCROSS: 'autocross',
+            VcuStatus.AMI_TRACK_DRIVE: 'trackdrive',
+            VcuStatus.AMI_STATIC_INSPECTION_A: 'static_inspection_a',
+            VcuStatus.AMI_STATIC_INSPECTION_B: 'static_inspection_b',
+            VcuStatus.AMI_AUTONOMOUS_DEMO: 'autonomous_demo',
+        }
+        return names.get(int(ami_state), 'unknown')
+
+
+def main(args: list[str] | None = None) -> None:
+    rclpy.init(args=args)
+    node = MissionManager()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        try:
+            rclpy.shutdown()
+        except RuntimeError:
+            pass
+
+
+if __name__ == '__main__':
+    main()
