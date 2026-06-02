@@ -16,13 +16,13 @@
 velodyne:
   parent_frame: "base_link"
   child_frame: "velodyne"
-  # TODO: measure and fill in real mounting position
+  # TODO: measure and fill in real mounting position (x/y/z)
   x: 0.0       # forward from rear axle (m)
   y: 0.0       # lateral offset — 0 if centred (m)
   z: 0.0       # height above ground (m)
-  roll: 0.0    # rotation about x (rad)
-  pitch: 0.0   # rotation about y (rad)
-  yaw: 0.0     # rotation about z — 0 if pointing forward (rad)
+  roll: 3.14159 # 180° — LiDAR mounted upside down
+  pitch: 0.0
+  yaw: 0.0
 
 zed2:
   parent_frame: "base_link"
