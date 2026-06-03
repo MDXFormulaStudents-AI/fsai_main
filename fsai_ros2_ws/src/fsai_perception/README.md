@@ -58,15 +58,25 @@ All four nodes are launched together via `perception.launch.py`.
 
 **File:** `fsai_perception/bridge.py`
 
-CarMaker publishes a legacy `sensor_msgs/PointCloud` (v1) and raw camera images. This node converts both into standard formats the rest of the pipeline expects.
+Normalises raw sensor topics into clean internal topics. Input topics and formats differ between sim and real — everything downstream of the bridge is identical in both cases.
 
-| From (CarMaker) | To (internal) | Conversion |
+**Simulation (CarMaker) — `pointcloud_format: v1`:**
+
+| From | To | Conversion |
 |---|---|---|
 | `/carmaker/pointcloud` (PointCloud v1) | `/perception/pointcloud` (PointCloud2) | numpy vectorised, intensity preserved |
-| `/front_camera_rgb/image_raw` | `/perception/image` | passthrough relay |
-| `/front_camera_depth/image_raw` (mono16, cm) | `/perception/depth` (32FC1, metres) | divide by 100, clip at 50 m |
+| `/front_camera_rgb/image_raw` | `/perception/image` | relay |
+| `/front_camera_depth/image_raw` (mono16, cm) | `/perception/depth` (32FC1, metres) | divide by 100, clip at `depth_max_m` |
 
-The PointCloud v1 → PointCloud2 conversion is done with numpy array operations rather than a per-point loop, which is fast enough to keep up with the 20 Hz LiDAR rate on the Jetson.
+**Real hardware — `pointcloud_format: v2`:**
+
+| From | To | Conversion |
+|---|---|---|
+| `/velodyne_points` (PointCloud2) | `/perception/pointcloud` (PointCloud2) | relay — already the right format |
+| `/zed/zed_node/rgb/image_rect_color` | `/perception/image` | relay |
+| `/zed/zed_node/depth/depth_registered` (32FC1, metres) | `/perception/depth` (32FC1, metres) | relay — already the right format |
+
+The `pointcloud_format` parameter controls which subscription type is used — `v1` for CarMaker's legacy PointCloud, `v2` for the VLP-16's native PointCloud2. Switch it in `perception.yaml` alongside the topic names.
 
 ---
 
@@ -85,7 +95,7 @@ Clusters the point cloud into candidate cone positions using DBSCAN.
 5. **Split merged clusters** — if a cluster is too wide (`split_threshold_m`) it probably contains two merged cones; k-means (k=2) splits it
 6. **Centroid** — mean of remaining points becomes the cone position; confidence scales with point count
 
-Publishes `Cone3DArray` on `/perception/lidar/cones` in the `Lidar_F` frame. All cones are labelled `unknown_cone` at this stage — colour comes from the camera.
+Publishes `Cone3DArray` on `/perception/lidar/cones` in the `lidar_frame` (configurable — `Lidar_F` in sim, `velodyne` on real hardware). All cones are labelled `unknown_cone` at this stage — colour comes from the camera.
 
 **Key config knobs** (in `perception.yaml`):
 
@@ -110,7 +120,7 @@ Runs a YOLO model on the RGB image to classify cone colours.
 - Publishes 2D bounding boxes + class name + confidence as `vision_msgs/Detection2DArray` on `/perception/camera/detections`
 - Also publishes an annotated image on `/perception/camera/image` for visualisation (can be disabled in config to save bandwidth)
 
-The CarMaker camera renders at ~3.3 Hz (limited by IPGMovie's render rate, not adjustable from the Jetson side). The fusion node handles this rate mismatch by caching the latest detection batch with a timestamp.
+The fusion node handles camera/LiDAR rate mismatch by caching the latest detection batch with a timestamp — stale detections (older than `camera_max_age_s`) are discarded. In sim, the CarMaker camera renders at ~3.3 Hz (limited by IPGMovie). On the ZED2 the camera runs at its configured frame rate.
 
 ---
 
@@ -205,13 +215,13 @@ Sensor mounting positions (for the TF tree) live in `fsai_sensors/fsai_sensors_b
 
 | Topic | Type | Description |
 |---|---|---|
-| `/cones` | `fsai_interfaces/Cone3DArray` | **Main output** — fused, coloured cones in `Fr1A` frame |
+| `/cones` | `fsai_interfaces/Cone3DArray` | **Main output** — fused, coloured cones in `output_frame` (`Fr1A` in sim, `base_link` on real hardware) |
 
 ### Internal topics (between perception nodes)
 
 | Topic | Description |
 |---|---|
-| `/perception/pointcloud` | PointCloud2, `Lidar_F` frame |
+| `/perception/pointcloud` | PointCloud2, `lidar_frame` (`Lidar_F` in sim, `velodyne` on real hardware) |
 | `/perception/image` | RGB image relay |
 | `/perception/depth` | Depth in metres |
 | `/perception/lidar/cones` | Raw LiDAR detections before colour fusion |

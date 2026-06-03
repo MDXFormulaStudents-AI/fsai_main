@@ -14,13 +14,14 @@
 # *****************************************************************************
 
 bridge:
-  pointcloud_in:  /carmaker/pointcloud
-  image_in:       /front_camera_rgb/image_raw
-  depth_in:       /front_camera_depth/image_raw
-  pointcloud_out: /perception/pointcloud
-  image_out:      /perception/image
-  depth_out:      /perception/depth
-  depth_max_m:    50.0          # CarMaker sends mono16 in cm → converted to float32 metres
+  pointcloud_in:     /carmaker/pointcloud
+  image_in:          /front_camera_rgb/image_raw
+  depth_in:          /front_camera_depth/image_raw
+  pointcloud_out:    /perception/pointcloud
+  image_out:         /perception/image
+  depth_out:         /perception/depth
+  depth_max_m:       50.0   # CarMaker sends mono16 in cm → converted to float32 metres
+  pointcloud_format: v1     # v1 = CarMaker legacy PointCloud, v2 = PointCloud2 passthrough
 
 fusion:
   lidar_input:       /perception/lidar/cones
@@ -39,13 +40,14 @@ fusion:
 # *****************************************************************************
 
 # bridge:
-#   pointcloud_in:  /velodyne_points
-#   image_in:       /zed/zed_node/rgb/image_rect_color
-#   depth_in:       /zed/zed_node/depth/depth_registered
-#   pointcloud_out: /perception/pointcloud
-#   image_out:      /perception/image
-#   depth_out:      /perception/depth
-#   depth_max_m:    50.0
+#   pointcloud_in:     /velodyne_points
+#   image_in:          /zed/zed_node/rgb/image_rect_color
+#   depth_in:          /zed/zed_node/depth/depth_registered
+#   pointcloud_out:    /perception/pointcloud
+#   image_out:         /perception/image
+#   depth_out:         /perception/depth
+#   depth_max_m:       50.0
+#   pointcloud_format: v2   # VLP-16 publishes PointCloud2 directly — no conversion needed
 
 # fusion:
 #   lidar_input:       /perception/lidar/cones
