@@ -250,12 +250,19 @@ ros2 launch fsai_perception perception.launch.py
 | Argument | Default | Description |
 |---|---|---|
 | `device` | `cuda:0` | YOLO inference device — use `cpu` if CUDA is unavailable |
+| `use_sim_time` | `true` | Use CarMaker simulation clock. **Set to `false` on real hardware** — with `true`, nodes wait for `/clock` from CarMaker and will freeze if it's not running |
 | `visualize` | `false` | Launch RViz (use `fsai_visualisation` instead for full viz) |
 
-**Example — force CPU inference:**
+**Example — sim (default):**
 
 ```bash
-ros2 launch fsai_perception perception.launch.py device:=cpu
+ros2 launch fsai_perception perception.launch.py
+```
+
+**Example — real hardware:**
+
+```bash
+ros2 launch fsai_perception perception.launch.py use_sim_time:=false device:=cuda:0
 ```
 
 ---

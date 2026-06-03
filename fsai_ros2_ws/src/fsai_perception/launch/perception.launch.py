@@ -19,6 +19,8 @@ def generate_launch_description():
                               description='Launch RViz'),
         DeclareLaunchArgument('device', default_value='cuda:0',
                               description='YOLO inference device: cpu or cuda:0'),
+        DeclareLaunchArgument('use_sim_time', default_value='true',
+                              description='Use simulation clock (true for CarMaker, false for real hardware)'),
 
         # ── Bridge ──────────────────────────────────────────────────────
         Node(
@@ -26,6 +28,7 @@ def generate_launch_description():
             executable='bridge',
             name='bridge',
             output='screen',
+            parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
         ),
 
         # ── LiDAR Detector ──────────────────────────────────────────────
@@ -34,7 +37,7 @@ def generate_launch_description():
             executable='lidar_detector',
             name='lidar_detector',
             output='screen',
-            parameters=[{'use_sim_time': True}],
+            parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
         ),
 
         # ── Camera Detector ─────────────────────────────────────────────
@@ -45,7 +48,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'device': LaunchConfiguration('device'),
-                'use_sim_time': True,
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
             }],
         ),
 
@@ -55,7 +58,7 @@ def generate_launch_description():
             executable='fusion',
             name='fusion',
             output='screen',
-            parameters=[{'use_sim_time': True}],
+            parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
         ),
 
         # ── RViz (optional) ─────────────────────────────────────────────

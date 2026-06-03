@@ -6,9 +6,8 @@
 #
 # Roll/pitch/yaw in radians.
 #
-# These values must stay in sync with fsai_perception/config/extrinsics.yaml,
-# which uses the same positions for camera-LiDAR fusion math.
-# Source: Fr1A vehicle config (Sensor.4 = camera, Sensor.6 = Lidar_F)
+# The perception pipeline reads these positions at runtime via TF2 — no
+# separate config file needed. Source: Fr1A vehicle config (Sensor.4 = camera, Sensor.6 = Lidar_F)
 
 velodyne:
   parent_frame: "base_link"

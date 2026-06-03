@@ -101,6 +101,7 @@ class Fusion(Node):
         self.create_subscription(Cone3DArray,      lidar_topic,    self._lidar_cb,   10)
 
         self._frame_count = 0
+        self._extrinsics_warn_count = 0
         self.get_logger().info(
             f'Fusion ready  lidar={lidar_topic}  camera={camera_topic}  '
             f'out={out_topic}  cam_frame={self._cam_frame}  '
@@ -134,6 +135,14 @@ class Fusion(Node):
 
         # Skip frame if intrinsics or extrinsics are not yet available
         if not self._intrinsics_ready or self._cam_pos is None:
+            self._extrinsics_warn_count += 1
+            if self._extrinsics_warn_count % 100 == 0:
+                self.get_logger().warn(
+                    f'Fusion skipped {self._extrinsics_warn_count} frames — '
+                    f'intrinsics_ready={self._intrinsics_ready}, '
+                    f'extrinsics_ready={self._cam_pos is not None}. '
+                    f'Check camera_info_topic and TF ({self._out_frame} → {self._cam_frame}).'
+                )
             return
 
         now = self.get_clock().now()
