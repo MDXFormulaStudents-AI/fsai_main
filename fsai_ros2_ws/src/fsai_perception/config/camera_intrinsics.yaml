@@ -1,9 +1,0 @@
-# Camera intrinsics — from /front_camera_rgb/camera_info
-# These are used as fallback if camera_info topic is unavailable.
-# The fusion node auto-updates these from the live camera_info topic.
-width:  640
-height: 480
-fx: 320.0
-fy: 320.0
-cx: 320.0
-cy: 240.0

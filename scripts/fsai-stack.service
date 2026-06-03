@@ -1,0 +1,18 @@
+[Unit]
+Description=MDX FSAI ROS2 Stack
+After=fsai-can.service
+Requires=fsai-can.service
+
+[Service]
+Type=simple
+User=mdxfsai
+WorkingDirectory=/home/mdxfsai/fsai_main
+ExecStart=/bin/bash /home/mdxfsai/fsai_main/scripts/start_fsai.sh
+Restart=on-failure
+RestartSec=5
+# Send stdout/stderr to journalctl — view with: journalctl -u fsai-stack -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

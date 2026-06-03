@@ -59,5 +59,11 @@ fusion:
   # How many pixels outside a bbox a projected LiDAR point can be and still match
   bbox_margin_px: 15.0
   # TF frames
+  # Sim:  lidar_frame=Lidar_F  output_frame=Fr1A  camera_frame=Cam_F
+  # Real: lidar_frame=velodyne  output_frame=base_link  camera_frame=zed_camera_center
   lidar_frame:  Lidar_F
   output_frame: Fr1A
+  camera_frame: Cam_F
+  # camera_info topic — sim: /front_camera_rgb/camera_info
+  #                     real: /zed/zed_node/rgb/camera_info
+  camera_info_topic: /front_camera_rgb/camera_info

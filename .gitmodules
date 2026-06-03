@@ -1,3 +1,9 @@
 [submodule "references/finalyearproject"]
 	path = references/finalyearproject
 	url = https://github.com/Shuaibu-oluwatunmise/finalyearproject.git
+[submodule "fsai_ros2_ws/src/fsai_sensors/zed-ros2-wrapper"]
+	path = fsai_ros2_ws/src/fsai_sensors/zed-ros2-wrapper
+	url = https://github.com/stereolabs/zed-ros2-wrapper.git
+[submodule "fsai_ros2_ws/src/fsai_sensors/zed-ros2-interfaces"]
+	path = fsai_ros2_ws/src/fsai_sensors/zed-ros2-interfaces
+	url = https://github.com/stereolabs/zed-ros2-interfaces.git
