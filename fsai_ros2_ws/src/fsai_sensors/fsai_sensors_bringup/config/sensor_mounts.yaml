@@ -4,22 +4,17 @@
 #   - origin: centre of rear axle at ground level
 #   - x: forward, y: left, z: up
 #
-# HOW TO FILL IN:
-#   Physically measure from the rear axle centre (ground level) to each
-#   sensor's reference point and fill in x/y/z in metres.
-#   Roll/pitch/yaw in radians — use 0.0 if sensor is mounted level/forward-facing.
+# Roll/pitch/yaw in radians.
 #
-# IMPORTANT: All values below are PLACEHOLDER ZEROS.
-#            The system will build and run but point clouds / camera frames
-#            will appear at the car origin until real values are entered.
+# The perception pipeline reads these positions at runtime via TF2 — no
+# separate config file needed. Source: Fr1A vehicle config (Sensor.4 = camera, Sensor.6 = Lidar_F)
 
 velodyne:
   parent_frame: "base_link"
   child_frame: "velodyne"
-  # TODO: measure and fill in real mounting position (x/y/z)
-  x: 0.0       # forward from rear axle (m)
-  y: 0.0       # lateral offset — 0 if centred (m)
-  z: 0.0       # height above ground (m)
+  x: 2.921     # forward from rear axle (m)
+  y: 0.0       # centred laterally
+  z: 0.163     # height above ground (m)
   roll: 3.14159 # 180° — LiDAR mounted upside down
   pitch: 0.0
   yaw: 0.0
@@ -27,10 +22,9 @@ velodyne:
 zed2:
   parent_frame: "base_link"
   child_frame: "zed_camera_center"
-  # TODO: measure and fill in real mounting position
-  x: 0.0
-  y: 0.0
-  z: 0.0
+  x: 1.532     # forward from rear axle (m)
+  y: 0.0       # centred laterally
+  z: 0.816     # height above ground (m)
   roll: 0.0
-  pitch: 0.0
+  pitch: 0.2618 # 15° nose-down in radians (camera looks slightly at ground)
   yaw: 0.0

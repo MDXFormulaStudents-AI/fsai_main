@@ -24,7 +24,7 @@ class StaticProfileExecutor(Node):
 
         self.declare_parameter('publish_rate_hz', 50.0)
         self.declare_parameter('profile_directory', '')
-        self.declare_parameter('wheel_circumference_m', 1.4)
+        self.declare_parameter('wheel_circumference_m', 1.674)
 
         publish_rate_hz = max(
             1.0,
