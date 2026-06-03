@@ -1,6 +1,6 @@
 # fsai_perception
 
-Perception pipeline for the MDX Formula Student AI race car. Takes raw sensor data from the CarMaker simulation and publishes a stream of detected, coloured cone positions that the navigation stack can use directly.
+Perception pipeline for the MDX Formula Student AI race car. Takes raw sensor data from either the CarMaker simulation or real hardware (VLP-16 LiDAR + ZED2 camera) and publishes a stream of detected, coloured cone positions that the navigation stack can use directly.
 
 ---
 
@@ -8,8 +8,8 @@ Perception pipeline for the MDX Formula Student AI race car. Takes raw sensor da
 
 The pipeline detects traffic cones from LiDAR and camera data and fuses them into a single output — each cone has a 3D position in the vehicle frame and a colour label (blue, yellow, orange, large orange, or unknown if the camera could not classify it).
 
-**Input:** CarMaker simulation topics (LiDAR point cloud, RGB camera image)  
-**Output:** `/cones` — `fsai_interfaces/Cone3DArray` in the `Fr1A` vehicle frame
+**Input:** LiDAR point cloud + RGB camera image (sim or real — see Configuration)  
+**Output:** `/cones` — `fsai_interfaces/Cone3DArray` in the vehicle frame (`Fr1A` in sim, `base_link` on real hardware)
 
 The navigation team only needs `/cones`. Everything else is internal.
 
@@ -120,52 +120,86 @@ The CarMaker camera renders at ~3.3 Hz (limited by IPGMovie's render rate, not a
 
 Runs at LiDAR rate (20 Hz). On each LiDAR frame:
 
-1. **TF lookup** — transforms cone positions from `Lidar_F` → `Fr1A` via TF2 (static transforms published by CarMaker)
-2. **Project to image** — each cone centroid is projected into the camera image plane using the camera intrinsics (from `/front_camera_rgb/camera_info` or the yaml fallback) and the mounting extrinsics from `extrinsics.yaml`
+1. **TF lookup** — transforms cone positions from `lidar_frame` → `output_frame` via TF2
+2. **Project to image** — each cone centroid is projected into the camera image plane using intrinsics from the `camera_info` topic and extrinsics from a TF2 lookup (`output_frame` → `camera_frame`). Both are populated lazily on the first available message/transform — frames are skipped until both are ready
 3. **Hungarian matching** — assigns each projected LiDAR cone to the nearest YOLO bounding box it falls inside (scipy `linear_sum_assignment`). Confidence-weighted cost discourages matching to low-confidence detections
 4. **Colour assignment** — matched cones get the YOLO class name and confidence; unmatched cones stay as `unknown_cone` with the LiDAR confidence
 5. **Age check** — if the newest camera frame is older than `camera_max_age_s` (default 1 s), all cones are published as `unknown_cone` for that LiDAR frame
 
-Publishes `Cone3DArray` on `/cones` in `Fr1A`. Z is set to 0 (ground plane) — navigation uses the XY position only.
+Publishes `Cone3DArray` on `/cones` in `output_frame`. Z is set to 0 (ground plane) — navigation uses the XY position only.
 
 **Camera projection model:**
 
 ```
-Fr1A position → subtract camera mounting position → rotate into camera body frame
+output_frame position → subtract camera position (from TF) → rotate into camera body frame (from TF)
 → convert to optical frame (X-right, Y-down, Z-forward)
 → apply pinhole projection: u = fx * X/Z + cx,  v = fy * Y/Z + cy
 ```
 
-The camera body → optical frame axis swap is: `X_opt = -Y_body`, `Y_opt = -Z_body`, `Z_opt = X_body`.
+Intrinsics (fx, fy, cx, cy) come from the `camera_info_topic`. The camera body → optical frame axis swap is: `X_opt = -Y_body`, `Y_opt = -Z_body`, `Z_opt = X_body`.
 
 ---
 
 ## Configuration
 
-All tunable parameters are in `config/perception.yaml`. You should not need to change source code to tune the detector.
+All tunable parameters are in `config/perception.yaml`. You should not need to change source code to tune the detector or switch environments.
 
 ```
 config/
-  perception.yaml        # all node parameters — one section per node
-  extrinsics.yaml        # camera and LiDAR mounting positions and orientations
-  camera_intrinsics.yaml # fallback intrinsics (overwritten at runtime by camera_info topic)
+  perception.yaml   # all node parameters — sim and real blocks at the top, shared tuning below
 ```
 
-`extrinsics.yaml` values come from the CarMaker vehicle config (`FS_Autonomous`). If the sensor positions change in the sim, update this file — the code reads it at startup.
+### Switching between sim and real hardware
+
+`perception.yaml` has two clearly marked blocks at the top — one for CarMaker simulation (active by default) and one for real hardware (VLP-16 + ZED2, commented out). To switch, comment out the sim block and uncomment the real block:
+
+```yaml
+# SIMULATION (active)          →  comment this out
+bridge:
+  pointcloud_in: /carmaker/pointcloud
+  ...
+fusion:
+  lidar_frame:  Lidar_F
+  camera_frame: Cam_F
+  ...
+
+# REAL HARDWARE (commented)    →  uncomment this
+# bridge:
+#   pointcloud_in: /velodyne_points
+#   ...
+# fusion:
+#   lidar_frame:  velodyne
+#   camera_frame: zed_camera_center
+#   ...
+```
+
+Sensor mounting positions (for the TF tree) live in `fsai_sensors/fsai_sensors_bringup/config/sensor_mounts.yaml` — that is the single source of truth for where sensors are physically mounted. The perception pipeline reads those positions via TF2 at runtime.
 
 ---
 
 ## Topics
 
-### Inputs (from simulation)
+### Inputs
+
+**Simulation (CarMaker):**
 
 | Topic | Type | Source |
 |---|---|---|
-| `/carmaker/pointcloud` | `sensor_msgs/PointCloud` | CarMaker LiDAR (Lidar_F) |
+| `/carmaker/pointcloud` | `sensor_msgs/PointCloud` | CarMaker LiDAR (`Lidar_F`) |
 | `/front_camera_rgb/image_raw` | `sensor_msgs/Image` | CarMaker RGB camera |
-| `/front_camera_rgb/camera_info` | `sensor_msgs/CameraInfo` | CarMaker camera info |
+| `/front_camera_rgb/camera_info` | `sensor_msgs/CameraInfo` | CarMaker camera intrinsics |
 | `/front_camera_depth/image_raw` | `sensor_msgs/Image` | CarMaker depth camera |
-| `/tf_static` | TF2 static transforms | CarMaker (Fr1A → Lidar_F etc.) |
+| `/tf_static` | TF2 | CarMaker (`Fr1A → Lidar_F`, `Fr1A → Cam_F`) |
+
+**Real hardware (VLP-16 + ZED2):**
+
+| Topic | Type | Source |
+|---|---|---|
+| `/velodyne_points` | `sensor_msgs/PointCloud2` | Velodyne VLP-16 |
+| `/zed/zed_node/rgb/image_rect_color` | `sensor_msgs/Image` | ZED2 RGB camera |
+| `/zed/zed_node/rgb/camera_info` | `sensor_msgs/CameraInfo` | ZED2 factory intrinsics |
+| `/zed/zed_node/depth/depth_registered` | `sensor_msgs/Image` | ZED2 depth |
+| `/tf_static` | TF2 | `fsai_sensors_bringup` (`base_link → velodyne`, `base_link → zed_camera_center`) |
 
 ### Outputs (for other teams)
 
