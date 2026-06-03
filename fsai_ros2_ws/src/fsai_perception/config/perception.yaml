@@ -2,68 +2,97 @@
 # FSAI Perception Pipeline — Central Config
 # All tunable parameters live here. Each node reads its section at startup.
 # Parameters can still be overridden at launch time via --ros-args -p <key>:=<val>
+#
+# TO SWITCH ENVIRONMENTS:
+#   Comment out the active section and uncomment the other.
+#   Only the marked blocks need changing — everything else is shared.
 # =============================================================================
 
+
+# *****************************************************************************
+# SIMULATION (CarMaker) — active
+# *****************************************************************************
+
 bridge:
-  # Raw CarMaker topics (inputs)
   pointcloud_in:  /carmaker/pointcloud
   image_in:       /front_camera_rgb/image_raw
   depth_in:       /front_camera_depth/image_raw
-  # Normalised internal topics (outputs)
   pointcloud_out: /perception/pointcloud
   image_out:      /perception/image
   depth_out:      /perception/depth
-  # Depth conversion: CarMaker sends mono16 in cm → convert to float32 metres
-  depth_max_m: 50.0
+  depth_max_m:    50.0          # CarMaker sends mono16 in cm → converted to float32 metres
+
+fusion:
+  lidar_input:       /perception/lidar/cones
+  camera_input:      /perception/camera/detections
+  output_topic:      /cones
+  camera_max_age_s:  1.0
+  bbox_margin_px:    15.0
+  lidar_frame:       Lidar_F
+  output_frame:      Fr1A
+  camera_frame:      Cam_F
+  camera_info_topic: /front_camera_rgb/camera_info
+
+
+# *****************************************************************************
+# REAL HARDWARE (VLP-16 + ZED2) — commented out
+# *****************************************************************************
+
+# bridge:
+#   pointcloud_in:  /velodyne_points
+#   image_in:       /zed/zed_node/rgb/image_rect_color
+#   depth_in:       /zed/zed_node/depth/depth_registered
+#   pointcloud_out: /perception/pointcloud
+#   image_out:      /perception/image
+#   depth_out:      /perception/depth
+#   depth_max_m:    50.0
+
+# fusion:
+#   lidar_input:       /perception/lidar/cones
+#   camera_input:      /perception/camera/detections
+#   output_topic:      /cones
+#   camera_max_age_s:  1.0
+#   bbox_margin_px:    15.0
+#   lidar_frame:       velodyne
+#   output_frame:      base_link
+#   camera_frame:      zed_camera_center
+#   camera_info_topic: /zed/zed_node/rgb/camera_info
+
+
+# =============================================================================
+# SHARED — same for both sim and real
+# =============================================================================
 
 lidar_detector:
   input_topic:  /perception/pointcloud
   output_topic: /perception/lidar/cones
   # DBSCAN clustering
-  eps:        0.35    # cluster radius (m)
-  min_points: 2       # minimum points per cluster
+  eps:        0.35
+  min_points: 2
   # Detection range
   min_distance_m: 0.2
   max_distance_m: 30.0
   # Cone footprint validation (XY plane)
   cone_width_min_m: 0.03
   cone_width_max_m: 0.60
-  # Height validation (disable for horizontal/2D LiDAR)
+  # Height validation (disable for 2D/horizontal LiDAR)
   use_height_filter:  false
   cone_height_min_m:  0.05
   cone_height_max_m:  0.50
-  # Ground removal: strip points within this distance of estimated ground
+  # Ground removal
   ground_threshold_m: 0.10
   # Split merged clusters (two cones touching in DBSCAN)
   split_threshold_m: 0.45
-  # Retro-reflective intensity filter (set false to disable)
+  # Retro-reflective intensity filter
   use_intensity_filter: true
 
 camera_detector:
   input_topic:         /perception/image
   output_topic:        /perception/camera/detections
   visualization_topic: /perception/camera/image
-  model_path:          models/best.pt   # relative to package share dir
+  model_path:          models/best.pt
   confidence:    0.50
   iou:           0.45
   input_size:    640
-  device:        cuda:0     # use 'cpu' if no GPU
+  device:        cuda:0        # use 'cpu' if no GPU
   publish_visualization: true
-
-fusion:
-  lidar_input:  /perception/lidar/cones
-  camera_input: /perception/camera/detections
-  output_topic: /cones
-  # How old a camera detection can be before we stop trusting its colour (seconds)
-  camera_max_age_s: 1.0
-  # How many pixels outside a bbox a projected LiDAR point can be and still match
-  bbox_margin_px: 15.0
-  # TF frames
-  # Sim:  lidar_frame=Lidar_F  output_frame=Fr1A  camera_frame=Cam_F
-  # Real: lidar_frame=velodyne  output_frame=base_link  camera_frame=zed_camera_center
-  lidar_frame:  Lidar_F
-  output_frame: Fr1A
-  camera_frame: Cam_F
-  # camera_info topic — sim: /front_camera_rgb/camera_info
-  #                     real: /zed/zed_node/rgb/camera_info
-  camera_info_topic: /front_camera_rgb/camera_info
