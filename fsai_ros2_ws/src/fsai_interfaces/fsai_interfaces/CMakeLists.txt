@@ -15,7 +15,10 @@ find_package(geometry_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Cone3D.msg"
   "msg/Cone3DArray.msg"
-  "msg/VehicleControl.msg"
+  "msg/DriveCommand.msg"
+  "msg/VcuStatus.msg"
+  "msg/WheelSpeeds.msg"
+  "msg/InterfaceState.msg"
   DEPENDENCIES std_msgs geometry_msgs
 )
 

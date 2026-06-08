@@ -1,3 +1,7 @@
+# MDX FSAI — RViz Configuration
+# Fixed frame: Fr1A (X-forward, Y-left, Z-up)
+# Add your team's displays below the existing sections.
+
 Panels:
   - Class: rviz_common/Displays
     Name: Displays
@@ -5,21 +9,20 @@ Panels:
       Expanded:
         - /Global Options1
         - /TF1
-        - /LiDAR Scan1
-        - /LiDAR Detections (raw frame)1
-        - /Cone Markers (base_link)1
-        - /YOLO Annotated Camera1
+        - /── PERCEPTION ──1
+        - /── CAR ──1
       Splitter Ratio: 0.5
-    Tree Height: 750
+    Tree Height: 900
   - Class: rviz_common/Views
     Name: Views
     Splitter Ratio: 0.5
+
 Visualization Manager:
   Class: ""
   Displays:
-    # ---------------------------------------------------------------
-    # Grid
-    # ---------------------------------------------------------------
+
+    # ── BASE ─────────────────────────────────────────────────────────────────
+
     - Alpha: 1
       Cell Size: 1
       Class: rviz_default_plugins/Grid
@@ -34,9 +37,6 @@ Visualization Manager:
       Reference Frame: <Fixed Frame>
       Value: true
 
-    # ---------------------------------------------------------------
-    # TF Tree - shows Fr1A, Lidar_F, Cam_F frames from CarMaker
-    # ---------------------------------------------------------------
     - Class: rviz_default_plugins/TF
       Enabled: true
       Frame Timeout: 15
@@ -49,9 +49,9 @@ Visualization Manager:
       Show Names: true
       Value: true
 
-    # ---------------------------------------------------------------
-    # LiDAR raw scan (pipeline input — /lidar/pointcloud from bridge)
-    # ---------------------------------------------------------------
+    # ── PERCEPTION ───────────────────────────────────────────────────────────
+
+    # Raw LiDAR point cloud
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -74,39 +74,18 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Best Effort
-        Value: /lidar/pointcloud
+        Value: /perception/pointcloud
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
 
-    # ---------------------------------------------------------------
-    # LiDAR Detections — output of Node 2b (in Lidar_F frame)
-    # Cylinder markers per detected cone cluster before frame transform
-    # ---------------------------------------------------------------
+    # Fused cones — 3D mesh markers with colour labels
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: LiDAR Detections (raw frame)
+      Name: Cone Markers
       Namespaces:
-        {}
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /detections/lidar_markers
-      Value: true
-
-    # ---------------------------------------------------------------
-    # Final cones — output of Node 4 frame_transformer (in base_link)
-    # This is the main perception pipeline output → feeds into SLAM
-    # Disabled by default in this workspace to reduce initial clutter.
-    # ---------------------------------------------------------------
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: false
-      Name: Cone Markers (base_link)
-      Namespaces:
-        {}
+        cones: true
+        cone_labels: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -116,31 +95,27 @@ Visualization Manager:
         Value: /cone_markers
       Value: true
 
-    # ---------------------------------------------------------------
-    # YOLO annotated camera — output of Node 2a camera_detector
-    # ---------------------------------------------------------------
-    # SLAM Map — output of ekf_slam
-    # ---------------------------------------------------------------
-    - Class: rviz_default_plugins/MarkerArray
+    # YOLO-annotated camera feed
+    - Class: rviz_default_plugins/Image
       Enabled: true
-      Name: SLAM Map
-      Namespaces:
-        {}
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: YOLO Camera
+      Normalize Range: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Best Effort
-        Value: /slam/markers
+        Value: /perception/camera/image
       Value: true
 
-    # ---------------------------------------------------------------
-    # Car Body — from cone_visualizer
-    # Disabled by default in this workspace to reduce initial clutter.
-    # ---------------------------------------------------------------
+    # ── CAR ──────────────────────────────────────────────────────────────────
+
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: false
+      Enabled: true
       Name: Car Body
       Namespaces:
         car_body: true
@@ -154,23 +129,8 @@ Visualization Manager:
         Value: /car_marker
       Value: true
 
-    # Shows YOLO bounding boxes on the live camera feed
-    # ---------------------------------------------------------------
-    - Class: rviz_default_plugins/Image
-      Enabled: true
-      Max Value: 1
-      Median window: 5
-      Min Value: 0
-      Name: YOLO Annotated Camera
-      Normalize Range: true
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /detections_image
-      Value: true
+    # ── ADD YOUR DISPLAYS HERE ───────────────────────────────────────────────
+
   Enabled: true
   Global Options:
     Background Color: 20; 20; 25

@@ -1,8 +1,10 @@
 fsai_ros2_ws/build/
 fsai_ros2_ws/install/
 fsai_ros2_ws/log/
+*.py[cod]
+fsai_ros2_ws/ZED_SDK.run
 build/
 install/
 log/
-__pycache__/
-*.py[cod]
+**/__pycache__/
+test_pipeline.py

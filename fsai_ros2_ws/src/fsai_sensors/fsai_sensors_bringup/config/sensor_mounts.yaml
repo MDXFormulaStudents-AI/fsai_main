@@ -1,0 +1,30 @@
+# Sensor mounting positions relative to base_link
+#
+# base_link convention (ROS REP-105):
+#   - origin: centre of rear axle at ground level
+#   - x: forward, y: left, z: up
+#
+# Roll/pitch/yaw in radians.
+#
+# The perception pipeline reads these positions at runtime via TF2 — no
+# separate config file needed. Source: Fr1A vehicle config (Sensor.4 = camera, Sensor.6 = Lidar_F)
+
+velodyne:
+  parent_frame: "base_link"
+  child_frame: "velodyne"
+  x: 2.921     # forward from rear axle (m)
+  y: 0.0       # centred laterally
+  z: 0.163     # height above ground (m)
+  roll: 3.14159 # 180° — LiDAR mounted upside down
+  pitch: 0.0
+  yaw: 0.0
+
+zed2:
+  parent_frame: "base_link"
+  child_frame: "zed_camera_center"
+  x: 1.532     # forward from rear axle (m)
+  y: 0.0       # centred laterally
+  z: 0.816     # height above ground (m)
+  roll: 0.0
+  pitch: 0.2618 # 15° nose-down in radians (camera looks slightly at ground)
+  yaw: 0.0
