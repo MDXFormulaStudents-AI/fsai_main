@@ -1,0 +1,10 @@
+[console_scripts]
+acceleration_nav = fsai_navigation.acceleration_nav:main
+forward_distance_controller = fsai_navigation.forward_distance_controller:main
+global_path_follower = fsai_navigation.global_path_follower:main
+ground_truth_path = fsai_navigation.ground_truth_path:main
+local_path_follower = fsai_navigation.local_path_follower:main
+perceived_path = fsai_navigation.perceived_path:main
+persistent_path = fsai_navigation.persistent_path:main
+pure_pursuit_path_follower = fsai_navigation.local_path_follower:pure_pursuit_main
+stanley_path_follower = fsai_navigation.stanley_path_follower:main

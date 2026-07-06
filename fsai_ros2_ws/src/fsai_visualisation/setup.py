@@ -31,6 +31,7 @@ setup(
     license='MIT',
     entry_points={
         'console_scripts': [
+            'carmaker_odom_tf = fsai_visualisation.carmaker_odom_tf:main',
             'cone_visualizer = fsai_visualisation.cone_visualizer:main',
         ],
     },

@@ -1,10 +1,10 @@
-"""
-Global path planner from CarMaker ObjectList markers.
+"""Ground-truth local path planner from CarMaker ObjectList markers.
 
-This comparison node assumes ``/carmaker/ObjectList`` provides a perfect global
-map of cone-like objects. The sampled ObjectList markers do not expose cone
-colour, so this node pairs markers by sorted marker ID and builds a global
-midpoint path from those opposite-side pairs.
+The CarMaker ObjectList markers in the current simulator bag are published in
+the vehicle-attached ``Obj_F`` frame. This node treats them as a perfect local
+object source and publishes a local midpoint path for controller comparison.
+The default method uses Delaunay edges as midpoint candidates; the original
+sorted-ID pairing method remains available via ``midline_method:=id_pairs``.
 """
 
 from dataclasses import dataclass
@@ -13,6 +13,7 @@ import math
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from scipy.spatial import Delaunay, QhullError
 
 from geometry_msgs.msg import Point, PoseStamped
 from nav_msgs.msg import Path
@@ -24,20 +25,35 @@ from visualization_msgs.msg import Marker, MarkerArray
 class ObjectCone:
     marker_id: int
     point: Point
+    colour: str
 
 
-class ObjectListGlobalPlanner(Node):
-    """Builds a dense global midpoint path from paired ObjectList cones."""
+@dataclass(frozen=True)
+class MidpointCandidate:
+    left: ObjectCone
+    right: ObjectCone
+    point: Point
+    width: float
+    forward_gap: float
+
+
+class GroundTruthPath(Node):
+    """Builds a dense local midpoint path from ObjectList cone-like markers."""
 
     def __init__(self):
-        super().__init__('object_list_global_planner')
+        super().__init__('ground_truth_path')
 
         self.declare_parameter('input_topic', '/carmaker/ObjectList')
-        self.declare_parameter('path_topic', '/student/nav/global_path')
-        self.declare_parameter('debug_topic', '/student/nav/global_path_markers')
+        self.declare_parameter('path_topic', '/nav/ground_truth_path')
+        self.declare_parameter('debug_topic', '/nav/ground_truth_path_markers')
+        self.declare_parameter('midline_method', 'delaunay')
         self.declare_parameter('sample_spacing', 0.25)
         self.declare_parameter('max_marker_scale', 1.0)
+        self.declare_parameter('min_pair_distance', 1.5)
         self.declare_parameter('max_pair_distance', 5.0)
+        self.declare_parameter('max_pair_x_gap', 2.0)
+        self.declare_parameter('midpoint_bin_width', 1.0)
+        self.declare_parameter('hold_last_valid_sec', 0.25)
         self.declare_parameter('close_path', False)
         self.declare_parameter('smoothing_enabled', False)
         self.declare_parameter('smoothing_iterations', 1)
@@ -48,9 +64,14 @@ class ObjectListGlobalPlanner(Node):
         input_topic = self.get_parameter('input_topic').value
         self._path_topic = self.get_parameter('path_topic').value
         self._debug_topic = self.get_parameter('debug_topic').value
+        self._midline_method = str(self.get_parameter('midline_method').value).lower()
         self._sample_spacing = float(self.get_parameter('sample_spacing').value)
         self._max_marker_scale = float(self.get_parameter('max_marker_scale').value)
+        self._min_pair_distance = float(self.get_parameter('min_pair_distance').value)
         self._max_pair_distance = float(self.get_parameter('max_pair_distance').value)
+        self._max_pair_x_gap = float(self.get_parameter('max_pair_x_gap').value)
+        self._midpoint_bin_width = float(self.get_parameter('midpoint_bin_width').value)
+        self._hold_last_valid_sec = float(self.get_parameter('hold_last_valid_sec').value)
         self._close_path = bool(self.get_parameter('close_path').value)
         self._smoothing_enabled = bool(self.get_parameter('smoothing_enabled').value)
         self._smoothing_iterations = max(0, int(self.get_parameter('smoothing_iterations').value))
@@ -66,18 +87,22 @@ class ObjectListGlobalPlanner(Node):
         )
         self._path_pub = self.create_publisher(Path, self._path_topic, 10)
         self._debug_pub = self.create_publisher(MarkerArray, self._debug_topic, 10)
+        self._last_valid_path_points: list[Point] = []
+        self._last_valid_path_frame = ''
+        self._last_valid_path_sec = -1.0
 
         self.get_logger().info(
-            f'ObjectList global planner listening on {input_topic}; '
-            f'publishing path={self._path_topic}, debug={self._debug_topic}'
+            f'Ground-truth path planner listening on {input_topic}; '
+            f'publishing path={self._path_topic}, debug={self._debug_topic}, '
+            f'method={self._midline_method}'
         )
 
     def _on_object_list(self, msg: MarkerArray) -> None:
         objects, frame_id, stamp = self._extract_objects(msg)
-        pairs = self._pair_objects_by_id(objects)
-        midpoints = [self._midpoint(left, right) for left, right in pairs]
+        pairs, midpoints, status = self._midline_from_objects(objects)
         smoothed_midpoints = self._smooth_path(midpoints, self._close_path)
-        path_points = self._sample_polyline(smoothed_midpoints, self._close_path)
+        candidate_path_points = self._sample_polyline(smoothed_midpoints, self._close_path)
+        path_points, status = self._select_publishable_path(candidate_path_points, frame_id, status)
 
         self._path_pub.publish(self._make_path_msg(path_points, frame_id, stamp))
         self._debug_pub.publish(
@@ -89,6 +114,7 @@ class ObjectListGlobalPlanner(Node):
                 smoothed_midpoints,
                 path_points,
                 len(objects),
+                status,
             )
         )
 
@@ -114,11 +140,202 @@ class ObjectListGlobalPlanner(Node):
                 ObjectCone(
                     marker_id=marker.id,
                     point=Point(x=position.x, y=position.y, z=position.z),
+                    colour=self._marker_colour(marker.color),
                 )
             )
 
         objects.sort(key=lambda obj: obj.marker_id)
         return objects, frame_id, stamp
+
+    def _midline_from_objects(self, objects: list[ObjectCone]) -> tuple[list[tuple[ObjectCone, ObjectCone]], list[Point], str]:
+        if self._midline_method == 'id_pairs':
+            pairs = self._pair_objects_by_id(objects)
+            return pairs, [self._midpoint(left, right) for left, right in pairs], 'id_pairs'
+
+        if self._midline_method != 'delaunay':
+            self.get_logger().warn(
+                f'Unknown midline_method={self._midline_method}; falling back to id_pairs'
+            )
+            pairs = self._pair_objects_by_id(objects)
+            return pairs, [self._midpoint(left, right) for left, right in pairs], 'id_pairs fallback'
+
+        coloured_objects = [obj for obj in objects if obj.colour in ('blue', 'yellow')]
+        triangulation_objects = coloured_objects if len(coloured_objects) >= 3 else objects
+
+        candidates = self._delaunay_midpoint_candidates(
+            triangulation_objects,
+            require_colour_cross=bool(coloured_objects),
+            require_lateral_cross=False,
+        )
+        status = (
+            f'delaunay colour candidates={len(candidates)} '
+            f'coloured={len(coloured_objects)}/{len(objects)}'
+        )
+        if len(candidates) < 2:
+            candidates = self._delaunay_midpoint_candidates(
+                triangulation_objects,
+                require_colour_cross=False,
+                require_lateral_cross=True,
+            )
+            status = (
+                f'delaunay lateral candidates={len(candidates)} '
+                f'coloured={len(coloured_objects)}/{len(objects)}'
+            )
+        if len(candidates) < 2 and triangulation_objects is not objects:
+            candidates = self._delaunay_midpoint_candidates(
+                objects,
+                require_colour_cross=False,
+                require_lateral_cross=True,
+            )
+            status = f'delaunay all-object lateral candidates={len(candidates)}'
+        if len(candidates) < 2:
+            candidates = self._delaunay_midpoint_candidates(
+                objects,
+                require_colour_cross=False,
+                require_lateral_cross=False,
+            )
+            status = f'delaunay relaxed candidates={len(candidates)}'
+
+        ordered_candidates = self._ordered_candidates(candidates)
+        ordered_midpoints = [candidate.point for candidate in ordered_candidates]
+        pairs = [(candidate.left, candidate.right) for candidate in ordered_candidates]
+        return pairs, ordered_midpoints, status
+
+    def _delaunay_midpoint_candidates(
+        self,
+        objects: list[ObjectCone],
+        require_colour_cross: bool,
+        require_lateral_cross: bool,
+    ) -> list[MidpointCandidate]:
+        if len(objects) < 3:
+            return []
+
+        points = [(obj.point.x, obj.point.y) for obj in objects]
+        try:
+            triangulation = Delaunay(points)
+        except QhullError as exc:
+            self.get_logger().debug(f'Delaunay failed: {exc}')
+            return []
+
+        edges = set()
+        for simplex in triangulation.simplices:
+            a, b, c = int(simplex[0]), int(simplex[1]), int(simplex[2])
+            edges.add(tuple(sorted((a, b))))
+            edges.add(tuple(sorted((b, c))))
+            edges.add(tuple(sorted((c, a))))
+
+        candidates = []
+        for left_idx, right_idx in edges:
+            left = objects[left_idx]
+            right = objects[right_idx]
+            candidate = self._midpoint_candidate(left, right, require_colour_cross, require_lateral_cross)
+            if candidate is not None:
+                candidates.append(candidate)
+        return candidates
+
+    def _midpoint_candidate(
+        self,
+        left: ObjectCone,
+        right: ObjectCone,
+        require_colour_cross: bool,
+        require_lateral_cross: bool,
+    ) -> MidpointCandidate | None:
+        width = self._distance_xy(left.point, right.point)
+        if width < self._min_pair_distance or width > self._max_pair_distance:
+            return None
+
+        forward_gap = abs(left.point.x - right.point.x)
+        if forward_gap > self._max_pair_x_gap:
+            return None
+
+        if require_colour_cross:
+            if {left.colour, right.colour} != {'blue', 'yellow'}:
+                return None
+
+        if require_lateral_cross:
+            left_y = left.point.y
+            right_y = right.point.y
+            if abs(left_y) < 0.05 or abs(right_y) < 0.05:
+                return None
+            if left_y * right_y >= 0.0:
+                return None
+
+        midpoint = self._midpoint(left, right)
+        if midpoint.x < -1.0:
+            return None
+        return MidpointCandidate(left=left, right=right, point=midpoint, width=width, forward_gap=forward_gap)
+
+    def _ordered_candidates(self, candidates: list[MidpointCandidate]) -> list[MidpointCandidate]:
+        if not candidates:
+            return []
+
+        candidates = sorted(candidates, key=lambda candidate: (candidate.point.x, candidate.point.y))
+
+        selected_candidates = []
+        group = []
+        group_start_x = candidates[0].point.x
+        bin_width = max(self._midpoint_bin_width, self._sample_spacing, 0.05)
+        for candidate in candidates:
+            if candidate.point.x - group_start_x <= bin_width:
+                group.append(candidate)
+                continue
+            selected_candidates.append(self._best_candidate_in_bin(group))
+            group = [candidate]
+            group_start_x = candidate.point.x
+
+        if group:
+            selected_candidates.append(self._best_candidate_in_bin(group))
+        return selected_candidates
+
+    @staticmethod
+    def _best_candidate_in_bin(candidates: list[MidpointCandidate]) -> MidpointCandidate:
+        return min(
+            candidates,
+            key=lambda candidate: (
+                candidate.forward_gap,
+                abs(candidate.point.y),
+                candidate.width,
+            ),
+        )
+
+    def _select_publishable_path(
+        self,
+        path_points: list[Point],
+        frame_id: str,
+        status: str,
+    ) -> tuple[list[Point], str]:
+        now_sec = self._now_sec()
+        if len(path_points) >= 2:
+            self._last_valid_path_points = self._copy_points(path_points)
+            self._last_valid_path_frame = frame_id
+            self._last_valid_path_sec = now_sec
+            return path_points, f'{status}; valid path points={len(path_points)}'
+
+        if (
+            self._last_valid_path_points
+            and self._last_valid_path_frame == frame_id
+            and now_sec - self._last_valid_path_sec <= self._hold_last_valid_sec
+        ):
+            return (
+                self._copy_points(self._last_valid_path_points),
+                f'{status}; holding last valid path points={len(self._last_valid_path_points)}',
+            )
+
+        return path_points, f'{status}; invalid path points={len(path_points)}'
+
+    @staticmethod
+    def _copy_points(points: list[Point]) -> list[Point]:
+        return [Point(x=point.x, y=point.y, z=point.z) for point in points]
+
+    @staticmethod
+    def _marker_colour(colour: ColorRGBA) -> str:
+        if colour.b > 0.6 and colour.r < 0.4:
+            return 'blue'
+        if colour.r > 0.7 and colour.g > 0.7 and colour.b < 0.3:
+            return 'yellow'
+        if colour.r > 0.7 and 0.25 < colour.g < 0.8 and colour.b < 0.3:
+            return 'orange'
+        return 'unknown'
 
     def _pair_objects_by_id(self, objects: list[ObjectCone]) -> list[tuple[ObjectCone, ObjectCone]]:
         pairs = []
@@ -229,6 +446,7 @@ class ObjectListGlobalPlanner(Node):
         smoothed_midpoints: list[Point],
         path_points: list[Point],
         object_count: int,
+        status: str,
     ) -> MarkerArray:
         markers = MarkerArray()
         markers.markers.append(self._delete_all(frame_id, stamp))
@@ -241,6 +459,7 @@ class ObjectListGlobalPlanner(Node):
                 len(midpoints),
                 len(smoothed_midpoints),
                 len(path_points),
+                status,
             )
         )
 
@@ -279,6 +498,7 @@ class ObjectListGlobalPlanner(Node):
         midpoint_count: int,
         smoothed_midpoint_count: int,
         path_point_count: int,
+        status: str,
     ) -> Marker:
         marker = self._base_marker(0, frame_id, stamp, 'object_global_summary', Marker.TEXT_VIEW_FACING)
         marker.pose.position.x = 0.0
@@ -290,10 +510,11 @@ class ObjectListGlobalPlanner(Node):
         if self._smoothing_enabled and self._smoothing_iterations > 0:
             smoothing = f'{self._smoothing_iterations}x @ {self._smoothing_cut_ratio:.2f}'
         marker.text = (
-            'ObjectList global midpoint path\n'
-            f'objects: {object_count}  pairs: {pair_count}\n'
+            'ObjectList ground-truth local midpoint path\n'
+            f'method: {self._midline_method}  objects: {object_count}  pairs: {pair_count}\n'
             f'midpoints: {midpoint_count}  smoothed: {smoothed_midpoint_count}\n'
-            f'path points: {path_point_count}  smoothing: {smoothing}'
+            f'path points: {path_point_count}  smoothing: {smoothing}\n'
+            f'status: {status}'
         )
         return marker
 
@@ -363,6 +584,9 @@ class ObjectListGlobalPlanner(Node):
     def _distance_xy(left: Point, right: Point) -> float:
         return math.hypot(left.x - right.x, left.y - right.y)
 
+    def _now_sec(self) -> float:
+        return self.get_clock().now().nanoseconds / 1e9
+
     @staticmethod
     def _blue() -> ColorRGBA:
         return ColorRGBA(r=0.1, g=0.35, b=1.0, a=1.0)
@@ -386,7 +610,7 @@ class ObjectListGlobalPlanner(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = ObjectListGlobalPlanner()
+    node = GroundTruthPath()
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):

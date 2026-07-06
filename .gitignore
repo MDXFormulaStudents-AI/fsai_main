@@ -1,6 +1,7 @@
 fsai_ros2_ws/build/
 fsai_ros2_ws/install/
 fsai_ros2_ws/log/
+fsai_ros2_ws/fsai_env/
 *.py[cod]
 fsai_ros2_ws/ZED_SDK.run
 build/

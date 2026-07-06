@@ -1,3 +1,5 @@
+from glob import glob
+
 from setuptools import find_packages, setup
 
 package_name = 'fsai_navigation'
@@ -10,6 +12,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,13 +27,15 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'corridor_midpoint_planner = fsai_navigation.corridor_midpoint_planner:main',
+            'acceleration_nav = fsai_navigation.acceleration_nav:main',
+            'forward_distance_controller = fsai_navigation.forward_distance_controller:main',
+            'ground_truth_path = fsai_navigation.ground_truth_path:main',
+            'perceived_path = fsai_navigation.perceived_path:main',
+            'persistent_path = fsai_navigation.persistent_path:main',
+            'local_path_follower = fsai_navigation.local_path_follower:main',
+            'pure_pursuit_path_follower = fsai_navigation.local_path_follower:pure_pursuit_main',
+            'stanley_path_follower = fsai_navigation.stanley_path_follower:main',
             'global_path_follower = fsai_navigation.global_path_follower:main',
-            'object_list_global_planner = fsai_navigation.object_list_global_planner:main',
-            'one_sided_offset_planner = fsai_navigation.one_sided_offset_planner:main',
-            'persistent_hybrid_planner = fsai_navigation.persistent_hybrid_planner:main',
-            'persistent_corridor_planner = fsai_navigation.persistent_corridor_planner:main',
-            'reactive_marker_planner = fsai_navigation.reactive_marker_planner:main',
         ],
     },
 )

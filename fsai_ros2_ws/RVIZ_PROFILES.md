@@ -5,6 +5,7 @@ This workspace now includes checked-in RViz profiles and a launcher script at th
 - `./Start_RViz.sh`
 - `./src/rviz_config/carmaker_perception.rviz`
 - `./src/rviz_config/sensors.rviz`
+- `./src/rviz_config/odom_forward_debug.rviz`
 
 ## Why this is the best fit here
 
@@ -32,6 +33,16 @@ That keeps the setup easy to use on any machine without creating a new ROS packa
 - `/camera/image_raw`
 - `/camera/depth`
 
+`odom_forward`
+
+- `/debug/carmaker_odom_tf_markers`
+- `/debug/carmaker_odom_tf_path`
+- `/nav/forward_distance_controller_markers`
+- `/carmaker/ObjectList`
+- `/perception/pointcloud`
+- `/perception/camera/image`
+- `/car_marker`
+
 ## Important note about `Cone3DArray`
 
 This workspace documents `/cones_camera_frame` as `fsai_interfaces/Cone3DArray`, but stock RViz cannot render that custom message directly. The intended RViz path is to visualize a `visualization_msgs/MarkerArray` topic such as `/cone_markers` instead.
@@ -50,4 +61,16 @@ Open the sensor-only profile:
 
 ```bash
 ./Start_RViz.sh sensors
+```
+
+Open the odom and forward-distance debug profile:
+
+```bash
+./Start_RViz.sh odom_forward
+```
+
+Or use the dedicated wrapper:
+
+```bash
+./Start_Odom_Forward_RViz.sh
 ```
