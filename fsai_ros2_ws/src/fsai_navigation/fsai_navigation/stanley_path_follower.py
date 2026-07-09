@@ -1,4 +1,4 @@
-"""Local ego-frame path follower for simulator VehicleControl commands."""
+"""Always-on local Stanley path follower for CarMaker VehicleControl."""
 
 from __future__ import annotations
 
@@ -6,12 +6,11 @@ from dataclasses import dataclass
 import math
 
 import rclpy
+from geometry_msgs.msg import Point, TransformStamped
+from nav_msgs.msg import Odometry, Path
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.time import Time
-
-from geometry_msgs.msg import Point, TransformStamped
-from nav_msgs.msg import Odometry, Path
 from std_msgs.msg import ColorRGBA
 import tf2_ros
 from vehiclecontrol_msgs.msg import VehicleControl
@@ -19,110 +18,87 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 
 @dataclass(frozen=True)
-class LocalTarget:
-    point: Point
-    control_point: Point
-    requested_lookahead_distance: float
-    effective_lookahead_distance: float
+class StanleyTarget:
+    nearest_point: Point
+    path_heading: float
+    cross_track_error: float
+    heading_error: float
+    cross_track_term: float
     curvature: float
     steer_angle: float
     gas: float
-    brake: float
+    speed: float
 
 
-class LocalPathFollower(Node):
-    """Follows a path with pure pursuit after transforming it into the vehicle frame."""
+class StanleyPathFollower(Node):
+    """Tracks a local path using Stanley steering and curvature-scaled throttle."""
 
-    def __init__(
-        self,
-        node_name: str = 'local_path_follower',
-        default_path_topic: str = '/nav/perceived_path',
-        default_debug_topic: str = '/nav/local_path_follower_markers',
-        default_enabled: bool = False,
-        display_name: str = 'Local path follower',
-    ):
-        super().__init__(node_name)
-        self._display_name = display_name
+    def __init__(self):
+        super().__init__('stanley_path_follower')
 
-        self.declare_parameter('path_topic', default_path_topic)
+        self.declare_parameter('path_topic', '/nav/perceived_path')
+        self.declare_parameter('odom_topic', '/carmaker/odom')
         self.declare_parameter('control_topic', '/carmaker/VehicleControl')
-        self.declare_parameter('debug_topic', default_debug_topic)
+        self.declare_parameter('debug_topic', '/nav/stanley_path_follower_markers')
         self.declare_parameter('control_frame', 'Fr1A')
-        self.declare_parameter('enabled', default_enabled)
         self.declare_parameter('control_rate_hz', 20.0)
         self.declare_parameter('path_timeout_sec', 0.5)
-        self.declare_parameter('wheelbase', 1.53)
+        self.declare_parameter('odom_timeout_sec', 0.5)
         self.declare_parameter('control_point_x_offset', 0.5637)
         self.declare_parameter('control_point_y_offset', 0.0)
+        self.declare_parameter('stanley_gain', 0.8)
+        self.declare_parameter('speed_softening', 1.0)
+        self.declare_parameter('max_steer', 0.35)
+        self.declare_parameter('steer_sign', 1.0)
+        self.declare_parameter('max_steer_rate', 4.0)
+        self.declare_parameter('cruise_gas', 0.06)
+        self.declare_parameter('min_gas', 0.03)
+        self.declare_parameter('max_gas', 0.18)
         self.declare_parameter('lookahead_distance', 3.0)
-        self.declare_parameter('adaptive_lookahead_enabled', False)
-        self.declare_parameter('lookahead_throttle_gain', 3.0)
-        self.declare_parameter('min_lookahead_distance', 1.2)
-        self.declare_parameter('max_lookahead_distance', 8.0)
-        self.declare_parameter('min_x', 0.4)
+        self.declare_parameter('curvature_slowdown_gain', 3.0)
+        self.declare_parameter('stop_brake', 0.8)
+        self.declare_parameter('min_x', -1.0)
         self.declare_parameter('max_x', 35.0)
         self.declare_parameter('max_abs_y', 10.0)
         self.declare_parameter('max_path_segment_gap', 2.0)
-        self.declare_parameter('cruise_gas', 0.08)
-        self.declare_parameter('min_gas', 0.03)
-        self.declare_parameter('max_gas', 0.18)
-        self.declare_parameter('stop_brake', 0.8)
-        self.declare_parameter('max_steer', 0.6)
-        self.declare_parameter('steer_sign', 1.0)
-        self.declare_parameter('steer_gain', 1.0)
-        self.declare_parameter('max_steer_rate', 4.0)
-        self.declare_parameter('curvature_slowdown_gain', 3.0)
-        self.declare_parameter('odom_topic', '/carmaker/odom')
-        self.declare_parameter('odom_timeout_sec', 0.5)
-        self.declare_parameter('max_speed_mps', 3.0)
-        self.declare_parameter('speed_brake_gain', 0.5)
-        self.declare_parameter('max_speed_brake', 0.3)
         self.declare_parameter('selector_ctrl', 1)
         self.declare_parameter('debug_line_width', 0.06)
         self.declare_parameter('debug_point_diameter', 0.25)
 
         path_topic = str(self.get_parameter('path_topic').value)
+        odom_topic = str(self.get_parameter('odom_topic').value)
         control_topic = str(self.get_parameter('control_topic').value)
         debug_topic = str(self.get_parameter('debug_topic').value)
         self._control_frame = str(self.get_parameter('control_frame').value)
-        self._enabled = bool(self.get_parameter('enabled').value)
         control_rate_hz = max(1.0, float(self.get_parameter('control_rate_hz').value))
 
         self._path_timeout_sec = float(self.get_parameter('path_timeout_sec').value)
-        self._wheelbase = float(self.get_parameter('wheelbase').value)
+        self._odom_timeout_sec = float(self.get_parameter('odom_timeout_sec').value)
         self._control_point_x_offset = float(self.get_parameter('control_point_x_offset').value)
         self._control_point_y_offset = float(self.get_parameter('control_point_y_offset').value)
+        self._stanley_gain = max(0.0, float(self.get_parameter('stanley_gain').value))
+        self._speed_softening = max(0.05, float(self.get_parameter('speed_softening').value))
+        self._max_steer = max(0.0, float(self.get_parameter('max_steer').value))
+        self._steer_sign = float(self.get_parameter('steer_sign').value)
+        self._max_steer_rate = max(0.0, float(self.get_parameter('max_steer_rate').value))
+        self._cruise_gas = float(self.get_parameter('cruise_gas').value)
+        self._min_gas = float(self.get_parameter('min_gas').value)
+        self._max_gas = float(self.get_parameter('max_gas').value)
         self._lookahead_distance = float(self.get_parameter('lookahead_distance').value)
-        self._adaptive_lookahead_enabled = bool(self.get_parameter('adaptive_lookahead_enabled').value)
-        self._lookahead_throttle_gain = float(self.get_parameter('lookahead_throttle_gain').value)
-        self._min_lookahead_distance = float(self.get_parameter('min_lookahead_distance').value)
-        self._max_lookahead_distance = float(self.get_parameter('max_lookahead_distance').value)
+        self._curvature_slowdown_gain = float(self.get_parameter('curvature_slowdown_gain').value)
+        self._stop_brake = float(self.get_parameter('stop_brake').value)
         self._min_x = float(self.get_parameter('min_x').value)
         self._max_x = float(self.get_parameter('max_x').value)
         self._max_abs_y = float(self.get_parameter('max_abs_y').value)
         self._max_path_segment_gap = float(self.get_parameter('max_path_segment_gap').value)
-        self._cruise_gas = float(self.get_parameter('cruise_gas').value)
-        self._min_gas = float(self.get_parameter('min_gas').value)
-        self._max_gas = float(self.get_parameter('max_gas').value)
-        self._stop_brake = float(self.get_parameter('stop_brake').value)
-        self._max_steer = float(self.get_parameter('max_steer').value)
-        self._steer_sign = float(self.get_parameter('steer_sign').value)
-        self._steer_gain = max(0.0, float(self.get_parameter('steer_gain').value))
-        self._max_steer_rate = float(self.get_parameter('max_steer_rate').value)
-        self._curvature_slowdown_gain = float(self.get_parameter('curvature_slowdown_gain').value)
-        odom_topic = str(self.get_parameter('odom_topic').value)
-        self._odom_timeout_sec = float(self.get_parameter('odom_timeout_sec').value)
-        self._max_speed_mps = float(self.get_parameter('max_speed_mps').value)
-        self._speed_brake_gain = float(self.get_parameter('speed_brake_gain').value)
-        self._max_speed_brake = float(self.get_parameter('max_speed_brake').value)
         self._selector_ctrl = int(self.get_parameter('selector_ctrl').value)
         self._debug_line_width = float(self.get_parameter('debug_line_width').value)
         self._debug_point_diameter = float(self.get_parameter('debug_point_diameter').value)
 
         self._path: Path | None = None
         self._path_receive_sec = -1.0
-        self._current_speed: float | None = None
-        self._odom_receive_sec: float = -1.0
+        self._odom: Odometry | None = None
+        self._odom_receive_sec = -1.0
         self._last_gas = 0.0
         self._last_steer = 0.0
         self._last_command_sec = self._now_sec()
@@ -138,13 +114,9 @@ class LocalPathFollower(Node):
         self._debug_pub = self.create_publisher(MarkerArray, debug_topic, 10)
         self.create_timer(1.0 / control_rate_hz, self._control_tick)
 
-        mode = 'ACTIVE' if self._enabled else 'disabled debug-only'
         self.get_logger().info(
-            f'{self._display_name} started in {mode} mode; path={path_topic}, '
-            f'control={control_topic}, debug={debug_topic}, frame={self._control_frame}, '
-            f'wheelbase={self._wheelbase:.4f} m, '
-            f'control_point_offset=({self._control_point_x_offset:.4f}, '
-            f'{self._control_point_y_offset:.4f}) m'
+            f'Stanley path follower ACTIVE; path={path_topic}, odom={odom_topic}, '
+            f'control={control_topic}, debug={debug_topic}, frame={self._control_frame}'
         )
 
     def _on_path(self, msg: Path) -> None:
@@ -152,155 +124,129 @@ class LocalPathFollower(Node):
         self._path_receive_sec = self._now_sec()
 
     def _on_odom(self, msg: Odometry) -> None:
-        vx = msg.twist.twist.linear.x
-        vy = msg.twist.twist.linear.y
-        self._current_speed = math.hypot(vx, vy)
+        self._odom = msg
         self._odom_receive_sec = self._now_sec()
 
     def _control_tick(self) -> None:
         valid, reason = self._inputs_valid()
         if not valid:
             self._debug_pub.publish(self._make_debug_markers([], None, reason))
-            if self._enabled:
-                self._publish_stop(reason)
+            self._publish_stop(reason)
             return
 
         path_points, reason = self._path_points_in_control_frame()
         if not path_points:
             self._debug_pub.publish(self._make_debug_markers([], None, reason))
-            if self._enabled:
-                self._publish_stop(reason)
+            self._publish_stop(reason)
             return
 
         target = self._compute_target(path_points)
         if target is None:
-            reason = 'no valid lookahead point'
+            reason = 'unable to compute Stanley target'
             self._debug_pub.publish(self._make_debug_markers(path_points, None, reason))
-            if self._enabled:
-                self._publish_stop(reason)
+            self._publish_stop(reason)
             return
 
         self._debug_pub.publish(self._make_debug_markers(path_points, target, 'active'))
-        if self._enabled:
-            self._publish_control(target.gas, target.brake, target.steer_angle)
+        self._publish_control(target.gas, 0.0, target.steer_angle)
 
     def _inputs_valid(self) -> tuple[bool, str]:
+        now_sec = self._now_sec()
         if self._path is None:
             return False, 'waiting for path'
         if len(self._path.poses) < 2:
             return False, 'path has fewer than two points'
-        if self._now_sec() - self._path_receive_sec > self._path_timeout_sec:
+        if now_sec - self._path_receive_sec > self._path_timeout_sec:
             return False, 'path stale'
+        if self._odom is None:
+            return False, 'waiting for odom'
+        if now_sec - self._odom_receive_sec > self._odom_timeout_sec:
+            return False, 'odom stale'
         return True, 'ok'
 
     def _path_points_in_control_frame(self) -> tuple[list[Point], str]:
         assert self._path is not None
-
         source_frame = self._path.header.frame_id or self._control_frame
         raw_points = [pose.pose.position for pose in self._path.poses]
         if source_frame == self._control_frame:
-            return self._contiguous_forward_path(raw_points)
+            return self._contiguous_path(raw_points)
 
         try:
-            transform = self._tf_buffer.lookup_transform(
-                self._control_frame,
-                source_frame,
-                Time(),
-            )
+            transform = self._tf_buffer.lookup_transform(self._control_frame, source_frame, Time())
         except (
             tf2_ros.LookupException,
             tf2_ros.ConnectivityException,
             tf2_ros.ExtrapolationException,
         ) as exc:
             return [], f'tf unavailable {source_frame}->{self._control_frame}: {exc}'
+        return self._contiguous_path([self._transform_point(point, transform) for point in raw_points])
 
-        return self._contiguous_forward_path([self._transform_point(point, transform) for point in raw_points])
-
-    def _contiguous_forward_path(self, points: list[Point]) -> tuple[list[Point], str]:
+    def _contiguous_path(self, points: list[Point]) -> tuple[list[Point], str]:
         segment = []
-        last_segment_point = None
-
+        last_point = None
         for point in points:
-            point_is_forward = self._point_is_forward_of_control_point(point)
-            if not segment:
-                if point_is_forward:
-                    segment.append(point)
-                    last_segment_point = point
+            control_point = self._to_control_point_frame(point)
+            point_in_window = (
+                self._min_x <= control_point.x <= self._max_x
+                and abs(control_point.y) <= self._max_abs_y
+            )
+            if not point_in_window:
+                if segment:
+                    break
                 continue
-
-            assert last_segment_point is not None
-            gap = self._distance_xy(last_segment_point, point)
-            if gap > self._max_path_segment_gap:
+            if last_point is not None and self._distance_xy(last_point, point) > self._max_path_segment_gap:
                 break
-            if not point_is_forward:
-                break
-
             segment.append(point)
-            last_segment_point = point
-
+            last_point = point
         if len(segment) < 2:
-            return [], f'contiguous forward path has {len(segment)} point(s)'
+            return [], f'contiguous path has {len(segment)} point(s)'
         return segment, 'ok'
 
-    def _compute_target(self, path_points: list[Point]) -> LocalTarget | None:
-        if not path_points:
-            return None
-
+    def _compute_target(self, path_points: list[Point]) -> StanleyTarget | None:
         control_points = [self._to_control_point_frame(point) for point in path_points]
-        requested_lookahead = self._dynamic_lookahead()
-        target_result = self._lookahead_point(control_points, requested_lookahead)
-        if target_result is None:
+        nearest = self._nearest_path_projection(control_points)
+        if nearest is None:
             return None
-        control_target, effective_lookahead = target_result
 
+        nearest_point, heading = nearest
+        curvature = self._curvature_for_gas(control_points)
+        tangent_x = math.cos(heading)
+        tangent_y = math.sin(heading)
+        cross_track_error = tangent_x * nearest_point.y - tangent_y * nearest_point.x
+        heading_error = self._wrap_angle(heading)
+        speed = self._vehicle_speed()
+        cross_track_term = math.atan2(self._stanley_gain * cross_track_error, speed + self._speed_softening)
+        steer = self._steer_sign * (heading_error + cross_track_term)
+        steer = self._clamp(steer, -self._max_steer, self._max_steer)
+        steer = self._rate_limit_steer(steer)
+        gas = self._gas_for_curvature(curvature)
+        return StanleyTarget(
+            nearest_point=self._to_control_frame(nearest_point),
+            path_heading=heading,
+            cross_track_error=cross_track_error,
+            heading_error=heading_error,
+            cross_track_term=cross_track_term,
+            curvature=curvature,
+            steer_angle=steer,
+            gas=gas,
+            speed=speed,
+        )
+
+    def _curvature_for_gas(self, control_points: list[Point]) -> float:
+        lookahead_result = self._lookahead_point(control_points, self._lookahead_distance)
+        if lookahead_result is None:
+            return 0.0
+        control_target, _ = lookahead_result
         target_distance_sq = max(
             control_target.x * control_target.x + control_target.y * control_target.y,
             1e-6,
         )
-        curvature = 2.0 * control_target.y / target_distance_sq
-        steer = self._steer_sign * self._steer_gain * math.atan(self._wheelbase * curvature)
-        steer = self._clamp(steer, -self._max_steer, self._max_steer)
-        steer = self._rate_limit_steer(steer)
+        return 2.0 * control_target.y / target_distance_sq
 
+    def _gas_for_curvature(self, curvature: float) -> float:
         curvature_abs = abs(curvature)
         gas_scale = 1.0 / (1.0 + self._curvature_slowdown_gain * curvature_abs)
-        gas = self._clamp(self._cruise_gas * gas_scale, self._min_gas, self._max_gas)
-        brake = 0.0
-
-        # Speed cap: if current speed exceeds max_speed_mps, kill gas and apply
-        # a light proportional brake.  Falls back gracefully if odom is unavailable.
-        now_sec = self._now_sec()
-        odom_fresh = (
-            self._current_speed is not None
-            and self._odom_receive_sec >= 0.0
-            and now_sec - self._odom_receive_sec <= self._odom_timeout_sec
-        )
-        if odom_fresh and self._current_speed > self._max_speed_mps:
-            overspeed = self._current_speed - self._max_speed_mps
-            gas = 0.0
-            brake = self._clamp(overspeed * self._speed_brake_gain, 0.0, self._max_speed_brake)
-
-        return LocalTarget(
-            point=self._to_control_frame(control_target),
-            control_point=control_target,
-            requested_lookahead_distance=requested_lookahead,
-            effective_lookahead_distance=effective_lookahead,
-            curvature=curvature,
-            steer_angle=steer,
-            gas=gas,
-            brake=brake,
-        )
-
-    def _dynamic_lookahead(self) -> float:
-        lookahead = self._lookahead_distance
-        if not self._adaptive_lookahead_enabled:
-            return lookahead
-
-        gas_ratio = 0.0
-        if self._max_gas > 1e-6:
-            gas_ratio = self._clamp(self._last_gas / self._max_gas, 0.0, 1.0)
-        lookahead += self._lookahead_throttle_gain * gas_ratio
-        return self._clamp(lookahead, self._min_lookahead_distance, self._max_lookahead_distance)
+        return self._clamp(self._cruise_gas * gas_scale, self._min_gas, self._max_gas)
 
     def _lookahead_point(self, path_points: list[Point], lookahead: float) -> tuple[Point, float] | None:
         if not path_points or lookahead <= 1e-6:
@@ -370,7 +316,7 @@ class LocalPathFollower(Node):
             length_sq = dx * dx + dy * dy
             if length_sq < 1e-9:
                 continue
-            ratio = LocalPathFollower._clamp(
+            ratio = StanleyPathFollower._clamp(
                 -(start.x * dx + start.y * dy) / length_sq,
                 0.0,
                 1.0,
@@ -388,6 +334,33 @@ class LocalPathFollower(Node):
         if nearest_point is not None and nearest_distance_sq > radius_sq:
             return nearest_point
         return farthest_point
+
+    def _nearest_path_projection(self, control_points: list[Point]) -> tuple[Point, float] | None:
+        best_point = None
+        best_heading = 0.0
+        best_distance_sq = float('inf')
+        for start, end in zip(control_points[:-1], control_points[1:]):
+            dx = end.x - start.x
+            dy = end.y - start.y
+            length_sq = dx * dx + dy * dy
+            if length_sq < 1e-9:
+                continue
+            ratio = self._clamp(-(start.x * dx + start.y * dy) / length_sq, 0.0, 1.0)
+            projected = Point(x=start.x + ratio * dx, y=start.y + ratio * dy, z=start.z)
+            distance_sq = projected.x * projected.x + projected.y * projected.y
+            if distance_sq < best_distance_sq:
+                best_point = projected
+                best_heading = math.atan2(dy, dx)
+                best_distance_sq = distance_sq
+        if best_point is None:
+            return None
+        return best_point, best_heading
+
+    def _vehicle_speed(self) -> float:
+        if self._odom is None:
+            return 0.0
+        linear = self._odom.twist.twist.linear
+        return abs(linear.x)
 
     def _rate_limit_steer(self, steer: float) -> float:
         now_sec = self._now_sec()
@@ -421,29 +394,34 @@ class LocalPathFollower(Node):
     def _make_debug_markers(
         self,
         path_points: list[Point],
-        target: LocalTarget | None,
+        target: StanleyTarget | None,
         status: str,
     ) -> MarkerArray:
-        stamp = self.get_clock().now().to_msg()
+        stamp = self._debug_stamp()
         markers = MarkerArray()
         markers.markers.append(self._delete_all(stamp))
         markers.markers.append(self._status_text(stamp, target, status, len(path_points)))
         if path_points:
-            markers.markers.append(self._line_strip(1, stamp, 'local_path', path_points, self._magenta()))
+            markers.markers.append(self._line_strip(1, stamp, 'stanley_path', path_points, self._magenta()))
         if target is not None:
             control_origin = self._control_origin_point()
-            markers.markers.append(self._point_list(2, stamp, 'lookahead_target', [target.point], self._orange()))
-            markers.markers.append(
-                self._line_strip(
-                    3,
-                    stamp,
-                    'control_point_to_lookahead',
-                    [control_origin, target.point],
-                    self._white(),
-                )
+            markers.markers.append(self._point_list(2, stamp, 'nearest_path_point', [target.nearest_point], self._orange()))
+            markers.markers.append(self._line_strip(3, stamp, 'cross_track_error', [control_origin, target.nearest_point], self._white()))
+            heading_end = Point(
+                x=target.nearest_point.x + 1.5 * math.cos(target.path_heading),
+                y=target.nearest_point.y + 1.5 * math.sin(target.path_heading),
+                z=target.nearest_point.z,
             )
-            markers.markers.append(self._point_list(4, stamp, 'rear_axle_control_point', [control_origin], self._cyan()))
+            markers.markers.append(self._line_strip(4, stamp, 'path_heading', [target.nearest_point, heading_end], self._cyan()))
+            markers.markers.append(self._point_list(5, stamp, 'rear_axle_control_point', [control_origin], self._cyan()))
         return markers
+
+    def _debug_stamp(self):
+        if self._path is not None:
+            stamp = self._path.header.stamp
+            if stamp.sec != 0 or stamp.nanosec != 0:
+                return stamp
+        return self.get_clock().now().to_msg()
 
     def _delete_all(self, stamp) -> Marker:
         marker = Marker()
@@ -452,59 +430,25 @@ class LocalPathFollower(Node):
         marker.action = Marker.DELETEALL
         return marker
 
-    def _status_text(self, stamp, target: LocalTarget | None, status: str, path_count: int) -> Marker:
-        marker = self._base_marker(0, stamp, 'pure_pursuit_path_follower_status', Marker.TEXT_VIEW_FACING)
+    def _status_text(self, stamp, target: StanleyTarget | None, status: str, path_count: int) -> Marker:
+        marker = self._base_marker(0, stamp, 'stanley_path_follower_status', Marker.TEXT_VIEW_FACING)
         marker.pose.position.x = 1.5
         marker.pose.position.z = 1.5
         marker.scale.z = 0.28
         marker.color = self._white()
-        enabled = 'true' if self._enabled else 'false'
-        speed_str = f'{self._current_speed:.2f} m/s' if self._current_speed is not None else 'no odom'
         if target is None:
-            marker.text = (
-                f'{self._display_name}\nenabled: {enabled}\nstatus: {status}\n'
-                f'path points: {path_count}  speed: {speed_str} / {self._max_speed_mps:.2f} m/s max'
-            )
+            marker.text = f'Stanley path follower\nstatus: {status}\npath points: {path_count}'
         else:
             marker.text = (
-                f'{self._display_name}  enabled: {enabled}\n'
+                f'Stanley path follower\n'
                 f'status: {status}  path points: {path_count}\n'
-                f'speed: {speed_str} / {self._max_speed_mps:.2f} m/s max\n'
-                f'lookahead set: {target.requested_lookahead_distance:.2f} m  '
-                f'effective: {target.effective_lookahead_distance:.2f} m\n'
-                f'curvature: {target.curvature:.3f}  '
-                f'steer: {target.steer_angle:.2f}  gas: {target.gas:.2f}  brake: {target.brake:.2f}\n'
-                f'control target: x={target.control_point.x:.2f} y={target.control_point.y:.2f}'
+                f'cte: {target.cross_track_error:.2f} m  heading: {math.degrees(target.heading_error):.1f} deg\n'
+                f'cte term: {math.degrees(target.cross_track_term):.1f} deg  '
+                f'steer: {target.steer_angle:.2f} rad\n'
+                f'curvature: {target.curvature:.3f}  speed: {target.speed:.2f} m/s  '
+                f'gas: {target.gas:.2f}'
             )
         return marker
-
-    def _point_is_forward_of_control_point(self, point: Point) -> bool:
-        control_point = self._to_control_point_frame(point)
-        return (
-            self._min_x <= control_point.x <= self._max_x
-            and abs(control_point.y) <= self._max_abs_y
-        )
-
-    def _to_control_point_frame(self, point: Point) -> Point:
-        return Point(
-            x=point.x - self._control_point_x_offset,
-            y=point.y - self._control_point_y_offset,
-            z=point.z,
-        )
-
-    def _to_control_frame(self, point: Point) -> Point:
-        return Point(
-            x=point.x + self._control_point_x_offset,
-            y=point.y + self._control_point_y_offset,
-            z=point.z,
-        )
-
-    def _control_origin_point(self) -> Point:
-        return Point(
-            x=self._control_point_x_offset,
-            y=self._control_point_y_offset,
-            z=0.0,
-        )
 
     def _line_strip(
         self,
@@ -549,11 +493,28 @@ class LocalPathFollower(Node):
         marker.lifetime.nanosec = 300_000_000
         return marker
 
+    def _to_control_point_frame(self, point: Point) -> Point:
+        return Point(
+            x=point.x - self._control_point_x_offset,
+            y=point.y - self._control_point_y_offset,
+            z=point.z,
+        )
+
+    def _to_control_frame(self, point: Point) -> Point:
+        return Point(
+            x=point.x + self._control_point_x_offset,
+            y=point.y + self._control_point_y_offset,
+            z=point.z,
+        )
+
+    def _control_origin_point(self) -> Point:
+        return Point(x=self._control_point_x_offset, y=self._control_point_y_offset, z=0.0)
+
     @staticmethod
     def _transform_point(point: Point, transform: TransformStamped) -> Point:
         translation = transform.transform.translation
         rotation = transform.transform.rotation
-        x, y, z = LocalPathFollower._rotate_vector(
+        x, y, z = StanleyPathFollower._rotate_vector(
             point.x,
             point.y,
             point.z,
@@ -573,7 +534,6 @@ class LocalPathFollower(Node):
         qy /= norm
         qz /= norm
         qw /= norm
-
         tx = 2.0 * (qy * z - qz * y)
         ty = 2.0 * (qz * x - qx * z)
         tz = 2.0 * (qx * y - qy * x)
@@ -582,6 +542,10 @@ class LocalPathFollower(Node):
             y + qw * ty + (qz * tx - qx * tz),
             z + qw * tz + (qx * ty - qy * tx),
         )
+
+    @staticmethod
+    def _wrap_angle(angle: float) -> float:
+        return math.atan2(math.sin(angle), math.cos(angle))
 
     @staticmethod
     def _clamp(value: float, lower: float, upper: float) -> float:
@@ -611,38 +575,19 @@ class LocalPathFollower(Node):
         return ColorRGBA(r=0.0, g=0.9, b=1.0, a=1.0)
 
 
-def _spin_node(node: LocalPathFollower) -> None:
+def main(args=None):
+    rclpy.init(args=args)
+    node = StanleyPathFollower()
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
-    except Exception:
-        if rclpy.ok():
-            raise
     finally:
-        if rclpy.ok() and node._enabled:
+        if rclpy.ok():
             node._publish_stop('shutdown')
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
-
-
-def main(args=None):
-    rclpy.init(args=args)
-    node = LocalPathFollower()
-    _spin_node(node)
-
-
-def pure_pursuit_main(args=None):
-    rclpy.init(args=args)
-    node = LocalPathFollower(
-        node_name='pure_pursuit_path_follower',
-        default_path_topic='/nav/persistent_path',
-        default_debug_topic='/nav/pure_pursuit_path_follower_markers',
-        default_enabled=True,
-        display_name='Pure pursuit path follower',
-    )
-    _spin_node(node)
 
 
 if __name__ == '__main__':

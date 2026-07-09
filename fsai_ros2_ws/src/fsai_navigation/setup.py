@@ -35,6 +35,7 @@ setup(
             'local_path_follower = fsai_navigation.local_path_follower:main',
             'pure_pursuit_path_follower = fsai_navigation.local_path_follower:pure_pursuit_main',
             'stanley_path_follower = fsai_navigation.stanley_path_follower:main',
+            'skidpad_path = fsai_navigation.skidpad_path:main',
             'global_path_follower = fsai_navigation.global_path_follower:main',
         ],
     },
