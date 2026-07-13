@@ -229,9 +229,12 @@ Routing table (candidate → forwarded, gated by mission + DRIVING):
 | `/static_mission_complete`, `/dynamic_mission_complete` | `/vehicle/mission_complete` | (matching mission)                           |
 | `/static_estop`                                           | `/vehicle/estop`            | static_inspection_b, autonomous_demo         |
 
-Launches: `mission_control.launch.py` (static side),
-`dynamic_mission.launch.py` (full dynamic stack: manager + dynamic executor +
-gated path generators + one follower + forward_distance_controller).
+Launch: **`mission_bringup.launch.py`** — the single entry point for **all 7
+missions** (one `mission_manager` + `static_profile_executor` +
+`dynamic_mission_executor` + the gated path generators + one follower +
+`forward_distance_controller`). `mission_control.launch.py` remains as a
+static-only convenience; **do not run it alongside `mission_bringup.launch.py`**,
+as that would spawn a second `mission_manager`.
 
 ### 4.7 `fsai_vehicle_interface` — CAN HAL
 
@@ -346,13 +349,11 @@ ros2 launch fsai_perception perception.launch.py
 # 4. Localization (→ /odometry/vehicle + home/Fr1A TF)
 ros2 launch fsai_localization vehicle_odometry.launch.py
 
-# 5. Dynamic mission stack, pointed at the real odom
-ros2 launch fsai_mission_control dynamic_mission.launch.py \
+# 5. Mission stack (ALL 7 missions), pointed at the real odom.
+#    One launch handles static + dynamic; the operator picks the mission on the
+#    ADS-DV touchscreen and the manager routes to the matching pipeline.
+ros2 launch fsai_mission_control mission_bringup.launch.py \
   odom_topic:=/odometry/vehicle steer_command_gain:=1.0
-
-# Static inspections:
-ros2 launch fsai_mission_control mission_control.launch.py
-# then select Static A/B or Demo on the touchscreen.
 ```
 
 ### 8.2 CarMaker (CMRosIF) simulation
@@ -360,8 +361,8 @@ ros2 launch fsai_mission_control mission_control.launch.py
 ```bash
 # odom TF chain from CarMaker
 ros2 launch fsai_visualisation odom_forward_debug.launch.py
-# perception bridge → /cones, then the dynamic stack with the sim plant-inverse
-ros2 launch fsai_mission_control dynamic_mission.launch.py \
+# perception bridge → /cones, then the mission stack with the sim plant-inverse
+ros2 launch fsai_mission_control mission_bringup.launch.py \
   odom_topic:=/carmaker/odom steer_command_gain:=6.85
 ```
 
@@ -420,7 +421,7 @@ python3 src/fsai_vehicle_interface/tools/vcu_simulator.py   # select AMI, step t
 | `fsai_perception`        | py       | `lidar_detector`, `camera_detector`, `fusion`, `bridge`                                               | `perception.launch.py`, `sensors.launch.py`                                              |
 | `fsai_localization`      | py       | `vehicle_odometry`                                                                                          | `vehicle_odometry.launch.py`                                                               |
 | `fsai_navigation`        | py       | `perceived_path`, `skidpad_path`, `local_path_follower`, `forward_distance_controller` (+ alternates) | `skidpad.launch.py`, `perceived_local_path.launch.py`, `local_path_follower.launch.py` |
-| `fsai_mission_control`   | py       | `mission_manager`, `static_profile_executor`, `dynamic_mission_executor`                                | `mission_control.launch.py`, `dynamic_mission.launch.py`                                 |
+| `fsai_mission_control`   | py       | `mission_manager`, `static_profile_executor`, `dynamic_mission_executor`                                | `mission_bringup.launch.py` (all 7), `mission_control.launch.py` (static-only)           |
 | `fsai_vehicle_interface` | C++      | `vehicle_interface_node`                                                                                    | `vehicle_interface.launch.py`                                                              |
 | `fsai_visualisation`     | py       | `carmaker_odom_tf`, `cone_visualizer`                                                                     | `odom_forward_debug.launch.py`, `visualisation.launch.py`                                |
 | `rviz_config`            | cfg      | —                                                                                                            | —                                                                                           |

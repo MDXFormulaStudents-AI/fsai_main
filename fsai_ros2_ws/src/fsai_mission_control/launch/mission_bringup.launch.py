@@ -1,19 +1,22 @@
-"""Bring up the dynamic-mission stack (AMI-driven track logic selection).
+"""Single bring-up for ALL seven missions (AMI-driven track logic selection).
 
-Starts mission_manager + dynamic_mission_executor and the four dynamic pipelines,
-all self-gated on /mission/selected:
+One mission_manager routes whatever the operator selects on the ADS-DV touchscreen:
 
+  static_inspection_a/b, autonomous_demo -> static_profile_executor (YAML profiles)
   acceleration -> forward_distance_controller (75 m)
-  skidpad      -> skidpad_path       -> /nav/active_path -> local_path_follower
-  autocross    -> perceived_path     -> /nav/active_path -> local_path_follower  (1 lap)
-  trackdrive   -> perceived_path     -> /nav/active_path -> local_path_follower  (10 laps)
+  skidpad      -> skidpad_path   -> /nav/active_path -> local_path_follower
+  autocross    -> perceived_path -> /nav/active_path -> local_path_follower   (1 lap)
+  trackdrive   -> perceived_path -> /nav/active_path -> local_path_follower   (10 laps)
 
-The followers publish DriveCommand on /dynamic_drive_command; mission_manager forwards
-it to /vehicle/drive_command only for the selected mission while the interface is DRIVING.
+mission_manager subscribes to both /static_drive_command and /dynamic_drive_command
+and forwards the matching candidate to /vehicle/drive_command only while the
+interface is DRIVING. Run this ONCE — do not also run mission_control.launch.py
+(that would spawn a second mission_manager).
 
 Bring these up SEPARATELY (not started here):
   - fsai_vehicle_interface  (real car / vcan HiL)   OR   vcu_simulator.py (bench)
-  - perception producing /cones, and the odom source (/carmaker/odom).
+  - perception producing /cones, and the odom source (/carmaker/odom in sim,
+    /odometry/vehicle from fsai_localization on the real car).
 """
 
 from launch import LaunchDescription
@@ -28,6 +31,7 @@ def generate_launch_description():
     odom_topic = LaunchConfiguration('odom_topic')
     active_path_topic = LaunchConfiguration('active_path_topic')
     drive_command_topic = LaunchConfiguration('drive_command_topic')
+    wheel_circumference_m = LaunchConfiguration('wheel_circumference_m')
 
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
@@ -48,15 +52,23 @@ def generate_launch_description():
         DeclareLaunchArgument('autocross_laps', default_value='1'),
         DeclareLaunchArgument('trackdrive_laps', default_value='10'),
 
-        # ── Mission control ────────────────────────────────────────────────
+        # ── Mission control (one manager for all 7 missions) ───────────────
         Node(
             package='fsai_mission_control', executable='mission_manager',
-            name='mission_manager', output='screen',
+            name='mission_manager', output='screen', emulate_tty=True,
             parameters=[{'use_sim_time': use_sim_time}],
         ),
         Node(
+            package='fsai_mission_control', executable='static_profile_executor',
+            name='static_profile_executor', output='screen', emulate_tty=True,
+            parameters=[{
+                'use_sim_time': use_sim_time,
+                'wheel_circumference_m': wheel_circumference_m,
+            }],
+        ),
+        Node(
             package='fsai_mission_control', executable='dynamic_mission_executor',
-            name='dynamic_mission_executor', output='screen',
+            name='dynamic_mission_executor', output='screen', emulate_tty=True,
             parameters=[{
                 'use_sim_time': use_sim_time,
                 'cones_topic': cones_topic,
@@ -104,7 +116,7 @@ def generate_launch_description():
                 'mission_gates': ['skidpad', 'autocross', 'trackdrive'],
                 'steer_command_gain': LaunchConfiguration('steer_command_gain'),
                 'max_speed_mps': LaunchConfiguration('max_speed_mps'),
-                'wheel_circumference_m': LaunchConfiguration('wheel_circumference_m'),
+                'wheel_circumference_m': wheel_circumference_m,
                 'drive_torque_nm': LaunchConfiguration('drive_torque_nm'),
                 'max_axle_rpm': LaunchConfiguration('max_axle_rpm'),
             }],
@@ -120,7 +132,7 @@ def generate_launch_description():
                 'drive_command_topic': drive_command_topic,
                 'mission_gate': 'acceleration',
                 'target_distance': LaunchConfiguration('acceleration_distance'),
-                'wheel_circumference_m': LaunchConfiguration('wheel_circumference_m'),
+                'wheel_circumference_m': wheel_circumference_m,
                 'drive_torque_nm': LaunchConfiguration('drive_torque_nm'),
                 'max_axle_rpm': LaunchConfiguration('max_axle_rpm'),
             }],
