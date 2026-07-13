@@ -18,8 +18,15 @@ from scipy.spatial import Delaunay, QhullError
 from fsai_interfaces.msg import Cone3DArray
 from geometry_msgs.msg import Point, PoseStamped
 from nav_msgs.msg import Path
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import ColorRGBA, String
 from visualization_msgs.msg import Marker, MarkerArray
+
+# Typical scales used to normalize the Delaunay path-cost terms before squaring
+# (see PerceivedPath._path_cost). Kept as constants; the per-term weights are the
+# tunable knobs (delaunay_w_* parameters).
+_NORM_ANGLE_RAD = math.radians(45.0)  # a 45 deg kink is a "unit" of angle cost
+_NORM_WIDTH_M = 0.5                    # 0.5 m width std-dev is a "unit"
+_NORM_SIDE = 1.0                       # one full wrong-side cone is a "unit"
 
 
 @dataclass(frozen=True)
@@ -35,12 +42,12 @@ class ConeObservation:
 
 
 @dataclass(frozen=True)
-class MidpointCandidate:
-    left: 'TrackedCone'
-    right: 'TrackedCone'
-    point: Point
+class DelaunayGate:
+    """A blue<->yellow Delaunay edge: its midpoint sits on the centre line."""
+    blue: 'TrackedCone'
+    yellow: 'TrackedCone'
+    midpoint: Point
     width: float
-    forward_gap: float
 
 
 @dataclass
@@ -69,10 +76,16 @@ class PerceivedPath(Node):
     def __init__(self):
         super().__init__('perceived_path')
 
+        # Mission self-gating. mission_gates is a CSV of /mission/selected values
+        # for which this node publishes its path; empty = always publish (default,
+        # preserves the standalone sim workflow). In the dynamic mission stack set
+        # mission_gates:="autocross,trackdrive" and path_topic:=/nav/active_path.
+        self.declare_parameter('mission_topic', '/mission/selected')
+        self.declare_parameter('mission_gates', '')
         self.declare_parameter('input_topic', '/cones')
         self.declare_parameter('path_topic', '/nav/perceived_path')
         self.declare_parameter('debug_topic', '/nav/perceived_path_markers')
-        self.declare_parameter('midline_method', 'delaunay')
+        self.declare_parameter('midline_method', 'forward_pairs')
         self.declare_parameter('publish_rate_hz', 10.0)
         self.declare_parameter('min_x', 0.5)
         self.declare_parameter('max_x', 35.0)
@@ -89,7 +102,26 @@ class PerceivedPath(Node):
         self.declare_parameter('min_pair_distance', 1.5)
         self.declare_parameter('max_pair_distance', 5.0)
         self.declare_parameter('max_pair_x_gap', 3.0)
-        self.declare_parameter('midpoint_bin_width', 1.0)
+        # Max absolute (Euclidean, axis-independent) distance between consecutive
+        # ordered midpoints. The path is truncated at the first larger jump so it
+        # cannot hop across the track to a spurious opposite-side midpoint. Applied
+        # before sampling, because sampling interpolates across any gap and would
+        # otherwise mask it from the follower's own segment-gap check.
+        self.declare_parameter('max_midpoint_gap', 4.0)
+        # Cost-based Delaunay midline (midline_method='delaunay'). Paths are grown
+        # from the car through the triangle graph and ranked by a weighted cost.
+        self.declare_parameter('delaunay_target_length_m', 10.0)
+        self.declare_parameter('delaunay_seed_max_x', 8.0)
+        self.declare_parameter('delaunay_beam_width', 5)
+        self.declare_parameter('delaunay_max_depth', 15)
+        self.declare_parameter('delaunay_w_angle', 1.0)
+        self.declare_parameter('delaunay_w_width', 1.0)
+        self.declare_parameter('delaunay_w_length', 1.0)
+        self.declare_parameter('delaunay_w_side', 1.5)
+        # Chaikin corner-cutting passes applied to the chosen centre-line, to
+        # remove the zig-zag spikes of threading the Delaunay midpoint cloud.
+        # 0 disables; 2-3 gives a smooth line.
+        self.declare_parameter('delaunay_smoothing_iterations', 2)
         self.declare_parameter('sample_spacing', 0.5)
         self.declare_parameter('offset_distance', 1.5)
         self.declare_parameter('blue_offset_sign', -1.0)
@@ -122,7 +154,16 @@ class PerceivedPath(Node):
         self._min_pair_distance = float(self.get_parameter('min_pair_distance').value)
         self._max_pair_distance = float(self.get_parameter('max_pair_distance').value)
         self._max_pair_x_gap = float(self.get_parameter('max_pair_x_gap').value)
-        self._midpoint_bin_width = float(self.get_parameter('midpoint_bin_width').value)
+        self._max_midpoint_gap = float(self.get_parameter('max_midpoint_gap').value)
+        self._delaunay_target_length_m = float(self.get_parameter('delaunay_target_length_m').value)
+        self._delaunay_seed_max_x = float(self.get_parameter('delaunay_seed_max_x').value)
+        self._delaunay_beam_width = max(1, int(self.get_parameter('delaunay_beam_width').value))
+        self._delaunay_max_depth = max(1, int(self.get_parameter('delaunay_max_depth').value))
+        self._delaunay_w_angle = float(self.get_parameter('delaunay_w_angle').value)
+        self._delaunay_w_width = float(self.get_parameter('delaunay_w_width').value)
+        self._delaunay_w_length = float(self.get_parameter('delaunay_w_length').value)
+        self._delaunay_w_side = float(self.get_parameter('delaunay_w_side').value)
+        self._delaunay_smoothing_iterations = max(0, int(self.get_parameter('delaunay_smoothing_iterations').value))
         self._sample_spacing = float(self.get_parameter('sample_spacing').value)
         self._offset_distance = float(self.get_parameter('offset_distance').value)
         self._blue_offset_sign = float(self.get_parameter('blue_offset_sign').value)
@@ -144,12 +185,18 @@ class PerceivedPath(Node):
         self._previous_path_time_sec = -1.0
         self._previous_strategy = 'none'
 
+        gates_raw = str(self.get_parameter('mission_gates').value)
+        self._mission_gates = {m.strip() for m in gates_raw.split(',') if m.strip()}
+        self._selected_mission = 'none'
+        mission_topic = str(self.get_parameter('mission_topic').value)
+
         self._sub = self.create_subscription(
             Cone3DArray,
             input_topic,
             self._on_cones,
             10,
         )
+        self.create_subscription(String, mission_topic, self._on_mission, 10)
         self._path_pub = self.create_publisher(Path, path_topic, 10)
         self._debug_pub = self.create_publisher(MarkerArray, debug_topic, 10)
         self.create_timer(1.0 / publish_rate_hz, self._publish_outputs)
@@ -297,7 +344,17 @@ class PerceivedPath(Node):
             and self._is_in_local_window(track.point)
         ]
 
+    def _on_mission(self, msg: String) -> None:
+        self._selected_mission = msg.data
+
+    def _mission_gated_out(self) -> bool:
+        """True when self-gating is enabled and this mission is not selected — in
+        which case the node stays silent so it never overwrites the shared path."""
+        return bool(self._mission_gates) and self._selected_mission not in self._mission_gates
+
     def _publish_outputs(self) -> None:
+        if self._mission_gated_out():
+            return
         now_sec = self._now_sec()
         self._prune_tracks(now_sec)
 
@@ -335,11 +392,13 @@ class PerceivedPath(Node):
 
         if len(blue) >= self._min_cones_per_side and len(yellow) >= self._min_cones_per_side:
             if self._midline_method == 'delaunay':
-                pairs, midpoints = self._delaunay_midline(blue, yellow)
+                midpoints, delaunay_context = self._delaunay_cost_midline(blue, yellow)
                 if len(midpoints) >= 2:
                     path = self._sample_polyline_points(midpoints)
-                    context = {'pairs': pairs, 'midpoints': midpoints}
-                    return 'delaunay_midpoint', path, context
+                    delaunay_context['midpoints'] = midpoints
+                    return 'delaunay_cost', path, delaunay_context
+                # Delaunay produced nothing usable — fall through to forward_pairs.
+                context = delaunay_context
             elif self._midline_method != 'forward_pairs':
                 self.get_logger().warn(
                     f'Unknown midline_method={self._midline_method}; using forward_pairs'
@@ -349,14 +408,19 @@ class PerceivedPath(Node):
             pairs = self._pair_by_forward_position(blue, yellow)
             if len(pairs) >= 2:
                 midpoints = [self._midpoint(left, right) for left, right in pairs]
-                path = self._sample_polyline_points(midpoints)
-                context = {'pairs': pairs, 'midpoints': midpoints}
-                return 'forward_pair_midpoint', path, context
+                midpoints = self._limit_midpoint_gaps(midpoints)
+                pairs = pairs[:len(midpoints)]
+                if len(midpoints) >= 2:
+                    path = self._sample_polyline_points(midpoints)
+                    # Merge (not overwrite) so any Delaunay debug survives a fallback.
+                    context = {**context, 'pairs': pairs, 'midpoints': midpoints}
+                    return 'forward_pair_midpoint', path, context
 
         fallback_colour, fallback_tracks = self._choose_one_sided_fallback(blue, yellow)
         if len(fallback_tracks) >= self._min_one_side_cones:
             sampled_boundary, path = self._one_sided_offset_path(fallback_colour, fallback_tracks)
             context = {
+                **context,
                 'fallback_colour': fallback_colour,
                 'fallback_tracks': fallback_tracks,
                 'sampled_boundary': sampled_boundary,
@@ -364,7 +428,7 @@ class PerceivedPath(Node):
             return f'one_sided_{fallback_colour}', path, context
 
         if self._previous_path and now_sec - self._previous_path_time_sec <= self._previous_path_hold_sec:
-            context = {'previous_strategy': self._previous_strategy}
+            context = {**context, 'previous_strategy': self._previous_strategy}
             return 'held_previous_path', self._previous_path, context
 
         return 'none', [], context
@@ -404,89 +468,252 @@ class PerceivedPath(Node):
         pairs.sort(key=lambda pair: (pair[0].x + pair[1].x) / 2.0)
         return pairs
 
-    def _delaunay_midline(
+    # ── Cost-based Delaunay midline (paper sec. 4.3.1) ─────────────────────
+
+    def _delaunay_cost_midline(
         self,
         blue: list[TrackedCone],
         yellow: list[TrackedCone],
-    ) -> tuple[list[tuple[TrackedCone, TrackedCone]], list[Point]]:
+    ) -> tuple[list[Point], dict]:
+        """Triangulate, grow candidate centre-lines from the car, pick lowest cost.
+
+        Returns (chosen midpoints near->far, debug context). The context always
+        carries the triangulation edges and every candidate gate midpoint so the
+        selection is inspectable in RViz, even when no usable path is found.
+        """
+        gates, adjacency, raw_edges = self._delaunay_gates(blue, yellow)
+        context: dict = {
+            'delaunay_edges': raw_edges,
+            'candidate_midpoints': [gate.midpoint for gate in gates],
+        }
+        if not gates:
+            return [], context
+
+        candidates = [path for path in self._grow_candidate_paths(gates, adjacency) if path]
+        if not candidates:
+            return [], context
+
+        scored = sorted(candidates, key=lambda path: (
+            self._path_cost(path, gates, include_length=True),
+            math.hypot(gates[path[0]].midpoint.x, gates[path[0]].midpoint.y),
+        ))
+        best = scored[0]
+        best_points = self._limit_midpoint_gaps([gates[idx].midpoint for idx in best])
+        best_points = self._chaikin_smooth(best_points, self._delaunay_smoothing_iterations)
+        context['pairs'] = [(gates[idx].blue, gates[idx].yellow) for idx in best]
+        if len(scored) > 1:
+            context['runner_up'] = [gates[idx].midpoint for idx in scored[1]]
+        return best_points, context
+
+    def _delaunay_gates(
+        self,
+        blue: list[TrackedCone],
+        yellow: list[TrackedCone],
+    ) -> tuple[list[DelaunayGate], dict, list[tuple[Point, Point]]]:
+        """Delaunay triangulate; return blue<->yellow gates, their triangle
+        adjacency, and all triangulation edges (for debug)."""
         objects = blue + yellow
         if len(objects) < 3:
-            return [], []
+            return [], {}, []
 
-        points = [(track.x, track.y) for track in objects]
+        points = [(cone.x, cone.y) for cone in objects]
         try:
             triangulation = Delaunay(points)
         except QhullError as exc:
             self.get_logger().debug(f'Perceived Delaunay failed: {exc}')
-            return [], []
+            return [], {}, []
 
-        edges = set()
+        raw_edge_keys = set()
         for simplex in triangulation.simplices:
             a, b, c = int(simplex[0]), int(simplex[1]), int(simplex[2])
-            edges.add(tuple(sorted((a, b))))
-            edges.add(tuple(sorted((b, c))))
-            edges.add(tuple(sorted((c, a))))
+            for i, j in ((a, b), (b, c), (c, a)):
+                raw_edge_keys.add(tuple(sorted((i, j))))
+        raw_edges = [(objects[i].point, objects[j].point) for i, j in raw_edge_keys]
 
-        candidates = []
-        for left_idx, right_idx in edges:
-            candidate = self._midpoint_candidate(objects[left_idx], objects[right_idx])
-            if candidate is not None:
-                candidates.append(candidate)
+        gate_index_by_edge: dict[tuple[int, int], int] = {}
+        gates: list[DelaunayGate] = []
 
-        ordered_candidates = self._ordered_candidates(candidates)
-        pairs = [(candidate.left, candidate.right) for candidate in ordered_candidates]
-        midpoints = [candidate.point for candidate in ordered_candidates]
-        return pairs, midpoints
+        def gate_for_edge(i: int, j: int) -> int | None:
+            key = tuple(sorted((i, j)))
+            if key in gate_index_by_edge:
+                return gate_index_by_edge[key]
+            ci, cj = objects[i], objects[j]
+            if {ci.colour, cj.colour} != {'blue', 'yellow'}:
+                return None
+            blue_cone = ci if ci.colour == 'blue' else cj
+            yellow_cone = cj if ci.colour == 'blue' else ci
+            width = self._distance_xy(ci.point, cj.point)
+            if width < self._min_pair_distance or width > self._max_pair_distance:
+                return None
+            midpoint = self._midpoint(blue_cone, yellow_cone)
+            if not self._is_in_local_window(midpoint):
+                return None
+            index = len(gates)
+            gates.append(DelaunayGate(blue=blue_cone, yellow=yellow_cone, midpoint=midpoint, width=width))
+            gate_index_by_edge[key] = index
+            return index
 
-    def _midpoint_candidate(self, left: TrackedCone, right: TrackedCone) -> MidpointCandidate | None:
-        if {left.colour, right.colour} != {'blue', 'yellow'}:
-            return None
+        adjacency: dict[int, set[int]] = {}
+        for simplex in triangulation.simplices:
+            a, b, c = int(simplex[0]), int(simplex[1]), int(simplex[2])
+            triangle_gates = []
+            for i, j in ((a, b), (b, c), (c, a)):
+                gate_idx = gate_for_edge(i, j)
+                if gate_idx is not None:
+                    triangle_gates.append(gate_idx)
+            for x in triangle_gates:
+                for y in triangle_gates:
+                    if x != y:
+                        adjacency.setdefault(x, set()).add(y)
 
-        width = self._distance_xy(left.point, right.point)
-        if width < self._min_pair_distance or width > self._max_pair_distance:
-            return None
+        return gates, adjacency, raw_edges
 
-        forward_gap = abs(left.x - right.x)
-        if forward_gap > self._max_pair_x_gap:
-            return None
-
-        midpoint = self._midpoint(left, right)
-        if not self._is_in_local_window(midpoint):
-            return None
-        return MidpointCandidate(left=left, right=right, point=midpoint, width=width, forward_gap=forward_gap)
-
-    def _ordered_candidates(self, candidates: list[MidpointCandidate]) -> list[MidpointCandidate]:
-        if not candidates:
+    def _grow_candidate_paths(self, gates: list[DelaunayGate], adjacency: dict) -> list[list[int]]:
+        """Breadth-first, beam-pruned growth of candidate paths (gate-index lists)
+        rooted at the car, stepping through the triangle adjacency graph."""
+        # Seed with the gates nearest the car (so paths always root close to the
+        # vehicle), preferring those within seed_max_x. Sorting by distance and
+        # capping to the beam width keeps the near corridor from being pruned away.
+        forward = [
+            idx for idx, gate in enumerate(gates)
+            if gate.midpoint.x > 0.0 and abs(gate.midpoint.y) <= self._max_abs_y
+        ]
+        forward.sort(key=lambda idx: math.hypot(gates[idx].midpoint.x, gates[idx].midpoint.y))
+        seeds = [idx for idx in forward if gates[idx].midpoint.x <= self._delaunay_seed_max_x]
+        seeds = (seeds or forward)[:self._delaunay_beam_width]
+        if not seeds:
             return []
 
-        candidates = sorted(candidates, key=lambda candidate: (candidate.point.x, candidate.point.y))
-        selected_candidates = []
-        group = []
-        group_start_x = candidates[0].point.x
-        bin_width = max(self._midpoint_bin_width, self._sample_spacing, 0.05)
+        live = [[seed] for seed in seeds]
+        completed: list[list[int]] = []
 
-        for candidate in candidates:
-            if candidate.point.x - group_start_x <= bin_width:
-                group.append(candidate)
-                continue
-            selected_candidates.append(self._best_candidate_in_bin(group))
-            group = [candidate]
-            group_start_x = candidate.point.x
+        for _ in range(self._delaunay_max_depth):
+            if not live:
+                break
+            # Break cost ties toward paths rooted nearest the car, so a clean
+            # (near-zero-cost) corridor keeps its near-rooted path instead of
+            # arbitrarily pruning it away.
+            live.sort(key=lambda path: (
+                self._path_cost(path, gates, include_length=False),
+                math.hypot(gates[path[0]].midpoint.x, gates[path[0]].midpoint.y),
+            ))
+            live = live[:self._delaunay_beam_width]
+            next_live: list[list[int]] = []
+            for path in live:
+                points = self._delaunay_path_points(path, gates)
+                if self._polyline_length(points) >= self._delaunay_target_length_m:
+                    completed.append(path)
+                    continue
+                extensions = [
+                    nxt for nxt in adjacency.get(path[-1], ())
+                    if nxt not in path and self._is_forward_step(points, gates[nxt].midpoint)
+                ]
+                if not extensions:
+                    completed.append(path)
+                    continue
+                for nxt in extensions:
+                    next_live.append(path + [nxt])
+            live = next_live
 
-        if group:
-            selected_candidates.append(self._best_candidate_in_bin(group))
-        return selected_candidates
+        completed.extend(live)
+        return completed
+
+    def _path_cost(self, path: list[int], gates: list[DelaunayGate], include_length: bool) -> float:
+        """Weighted sum of normalized-squared cost terms (paper Table 3 subset).
+
+        Terms: max segment angle change (smoothness), gate-width std-dev,
+        length vs. target (optional), and blue-left/yellow-right side-consistency
+        weighted by cone confidence. Lower is better."""
+        points = self._delaunay_path_points(path, gates)
+
+        # angle change (max |heading delta| over consecutive segments)
+        headings = [
+            math.atan2(points[k + 1].y - points[k].y, points[k + 1].x - points[k].x)
+            for k in range(len(points) - 1)
+        ]
+        angle_cost = 0.0
+        for k in range(len(headings) - 1):
+            angle_cost = max(angle_cost, abs(self._angle_diff(headings[k + 1], headings[k])))
+
+        # width std-dev
+        widths = [gates[idx].width for idx in path]
+        width_cost = self._stddev(widths)
+
+        # side consistency: blue should be left of heading into the gate, yellow right
+        side_cost = 0.0
+        for seg_idx, gate_idx in enumerate(path):
+            hx = points[seg_idx + 1].x - points[seg_idx].x
+            hy = points[seg_idx + 1].y - points[seg_idx].y
+            gate = gates[gate_idx]
+            mid = gate.midpoint
+            cross_blue = hx * (gate.blue.y - mid.y) - hy * (gate.blue.x - mid.x)
+            cross_yellow = hx * (gate.yellow.y - mid.y) - hy * (gate.yellow.x - mid.x)
+            if cross_blue < 0.0:       # blue on the right -> wrong
+                side_cost += gate.blue.confidence
+            if cross_yellow > 0.0:     # yellow on the left -> wrong
+                side_cost += gate.yellow.confidence
+        side_cost = side_cost / max(1, len(path))
+
+        # normalize (relative to typical scales), square, weight, sum
+        n_angle = angle_cost / _NORM_ANGLE_RAD
+        n_width = width_cost / _NORM_WIDTH_M
+        n_side = side_cost / _NORM_SIDE
+        total = (
+            self._delaunay_w_angle * n_angle * n_angle
+            + self._delaunay_w_width * n_width * n_width
+            + self._delaunay_w_side * n_side * n_side
+        )
+        if include_length:
+            length = self._polyline_length(points)
+            n_length = (length - self._delaunay_target_length_m) / max(1e-3, self._delaunay_target_length_m)
+            total += self._delaunay_w_length * n_length * n_length
+        return total
+
+    def _delaunay_path_points(self, path: list[int], gates: list[DelaunayGate]) -> list[Point]:
+        """Car origin followed by the gate midpoints of the path."""
+        return [Point(x=0.0, y=0.0, z=0.0)] + [gates[idx].midpoint for idx in path]
 
     @staticmethod
-    def _best_candidate_in_bin(candidates: list[MidpointCandidate]) -> MidpointCandidate:
-        return min(
-            candidates,
-            key=lambda candidate: (
-                candidate.forward_gap,
-                abs(candidate.point.y),
-                candidate.width,
-            ),
+    def _is_forward_step(points: list[Point], candidate: Point) -> bool:
+        """True if candidate lies ahead of the path's tip along its current heading."""
+        last = points[-1]
+        prev = points[-2] if len(points) >= 2 else Point(x=0.0, y=0.0, z=0.0)
+        hx, hy = last.x - prev.x, last.y - prev.y
+        return hx * (candidate.x - last.x) + hy * (candidate.y - last.y) > 0.0
+
+    @staticmethod
+    def _polyline_length(points: list[Point]) -> float:
+        return sum(
+            math.hypot(points[k + 1].x - points[k].x, points[k + 1].y - points[k].y)
+            for k in range(len(points) - 1)
         )
+
+    @staticmethod
+    def _chaikin_smooth(points: list[Point], iterations: int) -> list[Point]:
+        """Chaikin corner-cutting: replace each segment's endpoints with points at
+        1/4 and 3/4, keeping the true endpoints. A few passes turn the jagged
+        midpoint polyline into a smooth centre-line the follower can track cleanly."""
+        for _ in range(iterations):
+            if len(points) < 3:
+                break
+            smoothed = [points[0]]
+            for a, b in zip(points[:-1], points[1:]):
+                smoothed.append(Point(x=0.75 * a.x + 0.25 * b.x, y=0.75 * a.y + 0.25 * b.y, z=0.75 * a.z + 0.25 * b.z))
+                smoothed.append(Point(x=0.25 * a.x + 0.75 * b.x, y=0.25 * a.y + 0.75 * b.y, z=0.25 * a.z + 0.75 * b.z))
+            smoothed.append(points[-1])
+            points = smoothed
+        return points
+
+    @staticmethod
+    def _angle_diff(a: float, b: float) -> float:
+        return math.atan2(math.sin(a - b), math.cos(a - b))
+
+    @staticmethod
+    def _stddev(values: list[float]) -> float:
+        if len(values) < 2:
+            return 0.0
+        mean = sum(values) / len(values)
+        return math.sqrt(sum((v - mean) ** 2 for v in values) / len(values))
 
     def _choose_one_sided_fallback(
         self,
@@ -523,6 +750,23 @@ class PerceivedPath(Node):
             )
 
         return [sample for sample, _, _ in samples], centreline
+
+    def _limit_midpoint_gaps(self, midpoints: list[Point]) -> list[Point]:
+        """Keep the leading run of midpoints whose consecutive absolute spacing is
+        within max_midpoint_gap, dropping everything from the first larger jump on.
+
+        Midpoints arrive ordered near-to-far (by x), so this retains the connected
+        forward path and severs an over-long hop to a spurious opposite-side
+        midpoint before it is sampled/interpolated into the published path.
+        """
+        if len(midpoints) < 2:
+            return midpoints
+        limited = [midpoints[0]]
+        for previous, current in zip(midpoints[:-1], midpoints[1:]):
+            if self._distance_xy(previous, current) > self._max_midpoint_gap:
+                break
+            limited.append(current)
+        return limited
 
     def _sample_polyline_points(self, points: list[Point]) -> list[Point]:
         return [sample for sample, _, _ in self._sample_polyline_with_tangents(points)]
@@ -636,7 +880,28 @@ class PerceivedPath(Node):
         if held_tracks:
             markers.markers.append(self._point_list(11, 'hybrid_held_tracks', [t.point for t in held_tracks], self._orange(), 0.12))
 
+        # Delaunay planner debug: the triangulation, all candidate gate midpoints,
+        # and the runner-up path the cost rejected.
+        delaunay_edges = context.get('delaunay_edges', [])
+        if delaunay_edges:
+            markers.markers.append(self._edge_list(12, 'delaunay_edges', delaunay_edges, self._faint_grey()))
+        candidate_midpoints = context.get('candidate_midpoints', [])
+        if candidate_midpoints:
+            markers.markers.append(self._point_list(13, 'delaunay_candidate_midpoints', candidate_midpoints, self._green(), 0.14))
+        runner_up = context.get('runner_up', [])
+        if len(runner_up) >= 2:
+            markers.markers.append(self._line_strip(14, 'delaunay_runner_up', runner_up, self._faint_grey(), self._boundary_line_width))
+
         return markers
+
+    def _edge_list(self, marker_id: int, namespace: str, edges: list[tuple[Point, Point]], colour: ColorRGBA) -> Marker:
+        marker = self._base_marker(marker_id, namespace, Marker.LINE_LIST)
+        marker.scale.x = 0.04
+        marker.color = colour
+        for start, end in edges:
+            marker.points.append(start)
+            marker.points.append(end)
+        return marker
 
     @staticmethod
     def _midpoint(left: TrackedCone, right: TrackedCone) -> Point:
@@ -786,6 +1051,10 @@ class PerceivedPath(Node):
     @staticmethod
     def _grey() -> ColorRGBA:
         return ColorRGBA(r=0.7, g=0.7, b=0.7, a=0.35)
+
+    @staticmethod
+    def _faint_grey() -> ColorRGBA:
+        return ColorRGBA(r=0.75, g=0.75, b=0.8, a=0.9)
 
     @staticmethod
     def _orange() -> ColorRGBA:

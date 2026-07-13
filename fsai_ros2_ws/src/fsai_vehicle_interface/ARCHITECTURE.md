@@ -123,22 +123,22 @@ present** on the target machine. Clone `fsai_main`, build with colcon, done.
 
 ### 5.1 Published by this node (VCU data → ROS 2 stack)
 
-| Topic | Type | Content | Rate |
-|---|---|---|---|
-| `/vcu/status` | `fsai_interfaces/VcuStatus` | AS state, AMI state, RES GO, faults | 100 Hz |
-| `/vcu/wheel_speeds` | `fsai_interfaces/WheelSpeeds` | FL/FR/RL/RR rpm + pulse counts | 100 Hz |
-| `/vcu/steering` | `std_msgs/Float32` | Actual steer angle [deg] | 100 Hz |
-| `/vcu/brake` | `std_msgs/Float32MultiArray` | [front_pct, rear_pct] | 100 Hz |
-| `/vcu/imu` | `sensor_msgs/Imu` | Acceleration [m/s²], rotation [rad/s] | 100 Hz |
-| `/vcu/gps` | `sensor_msgs/NavSatFix` | Lat/lon [deg], altitude [m] | 100 Hz |
-| `/vehicle/interface_state` | `fsai_interfaces/InterfaceState` | Internal state machine state | 100 Hz |
+| Topic                        | Type                               | Content                                | Rate   |
+| ---------------------------- | ---------------------------------- | -------------------------------------- | ------ |
+| `/vcu/status`              | `fsai_interfaces/VcuStatus`      | AS state, AMI state, RES GO, faults    | 100 Hz |
+| `/vcu/wheel_speeds`        | `fsai_interfaces/WheelSpeeds`    | FL/FR/RL/RR rpm + pulse counts         | 100 Hz |
+| `/vcu/steering`            | `std_msgs/Float32`               | Actual steer angle [deg]               | 100 Hz |
+| `/vcu/brake`               | `std_msgs/Float32MultiArray`     | [front_pct, rear_pct]                  | 100 Hz |
+| `/vcu/imu`                 | `sensor_msgs/Imu`                | Acceleration [m/s²], rotation [rad/s] | 100 Hz |
+| `/vcu/gps`                 | `sensor_msgs/NavSatFix`          | Lat/lon [deg], altitude [m]            | 100 Hz |
+| `/vehicle/interface_state` | `fsai_interfaces/InterfaceState` | Internal state machine state           | 100 Hz |
 
 ### 5.2 Subscribed by this node (stack → vehicle)
 
-| Topic | Type | Publisher | Purpose |
-|---|---|---|---|
-| `/vehicle/drive_command` | `fsai_interfaces/DriveCommand` | Control node | Steer, torque, speed, brake |
-| `/vehicle/mission_complete` | `std_msgs/Bool` | Planning node | Signal mission is done |
+| Topic                         | Type                             | Publisher     | Purpose                     |
+| ----------------------------- | -------------------------------- | ------------- | --------------------------- |
+| `/vehicle/drive_command`    | `fsai_interfaces/DriveCommand` | Control node  | Steer, torque, speed, brake |
+| `/vehicle/mission_complete` | `std_msgs/Bool`                | Planning node | Signal mission is done      |
 
 ---
 
@@ -149,11 +149,13 @@ and must be copied into `fsai_ros2_ws/src/fsai_interfaces/msg/` before building.
 See Section 11 for transfer instructions.
 
 ### `DriveCommand.msg`
+
 Drive commands from the control node to this interface node.
 Intentionally minimal — state machine fields (mission status, direction, estop,
 handshake) are owned entirely by this node and never exposed to the stack.
 
 ### `VcuStatus.msg`
+
 All status data from the VCU, with enum constants baked in for clean Python usage.
 Includes AS state, AMI state (mission selection), RES GO signal, and fault flags.
 
@@ -163,9 +165,11 @@ Includes AS state, AMI state (mission selection), RES GO signal, and fault flags
 > the API is extended or the raw frame is read directly.
 
 ### `WheelSpeeds.msg`
+
 All four wheel speeds and pulse counts in one message with a shared timestamp.
 
 ### `InterfaceState.msg`
+
 The internal state machine state with enum constants. The Python stack uses this to
 know when it is safe to send drive commands (`DRIVING`) and when the run is over
 (`FINISHED`, `EMERGENCY`).
@@ -259,10 +263,10 @@ EMERGENCY (7)
 
 ### 7.3 Bug fixes from test script
 
-| Bug | Old behaviour | Fixed behaviour |
-|---|---|---|
-| MISSION_RUNNING never sent | Jumped 0→1→3, skipping RUNNING(2). VCU raised MISSION_STATUS_FAULT | DRIVING state sends RUNNING(2) correctly |
-| FINISHED dead end | No exit from FINISHED if AMI still selected. Script stuck forever | FINISHED and EMERGENCY exit when VCU power-cycles (AS_OFF + AMI_NOT_SELECTED) |
+| Bug                        | Old behaviour                                                        | Fixed behaviour                                                               |
+| -------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| MISSION_RUNNING never sent | Jumped 0→1→3, skipping RUNNING(2). VCU raised MISSION_STATUS_FAULT | DRIVING state sends RUNNING(2) correctly                                      |
+| FINISHED dead end          | No exit from FINISHED if AMI still selected. Script stuck forever    | FINISHED and EMERGENCY exit when VCU power-cycles (AS_OFF + AMI_NOT_SELECTED) |
 
 ---
 
@@ -273,6 +277,7 @@ the interface node must not continue sending the last known command indefinitely
 
 **Behaviour:** If the last received `DriveCommand` is older than `stale_command_timeout_ms`
 (default 100ms), all drive outputs are **zeroed immediately**:
+
 - `AI2VCU_STEER_ANGLE_REQUEST_deg = 0.0`
 - `AI2VCU_AXLE_SPEED_REQUEST_rpm = 0.0`
 - `AI2VCU_AXLE_TORQUE_REQUEST_Nm = 0.0`
@@ -320,6 +325,7 @@ other.
 ## 11. Deployment — transfer instructions
 
 ### Step 1: Copy message files
+
 Copy all four files from `messages_for_fsai_interfaces/` into the interfaces package:
 
 ```bash
@@ -344,12 +350,15 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 ```
 
 ### Step 2: Copy this package
+
 Copy the entire `fsai_vehicle_interface/` folder into:
+
 ```
 fsai_ros2_ws/src/fsai_vehicle_interface/
 ```
 
 ### Step 3: Set up CAN interface (on the AI computer)
+
 ```bash
 # Load kernel modules (once per boot, or add to /etc/modules)
 sudo modprobe can_dev
@@ -366,6 +375,7 @@ sudo ip link set vcan0 up
 ```
 
 ### Step 4: Build
+
 ```bash
 cd fsai_ros2_ws
 colcon build --packages-select fsai_interfaces fsai_vehicle_interface
@@ -374,7 +384,8 @@ source install/setup.bash
 
 Build `fsai_interfaces` first (or let colcon resolve order via package.xml dependencies).
 
-### Step 5: Run
+### Step 5: Run	
+
 ```bash
 ros2 launch fsai_vehicle_interface vehicle_interface.launch.py can_interface:=can0
 ```
@@ -383,22 +394,22 @@ ros2 launch fsai_vehicle_interface vehicle_interface.launch.py can_interface:=ca
 
 ## 12. Parameters
 
-| Parameter | Default | Description |
-|---|---|---|
-| `can_interface` | `can0` | CAN interface name (can0, vcan0, etc.) |
-| `stale_command_timeout_ms` | `100` | ms before /vehicle/drive_command is considered stale |
-| `loop_rate_hz` | `100` | Main loop rate. 100Hz = 10ms matches VCU CAN timing |
-| `imu_frame_id` | `imu` | TF frame ID for IMU messages |
-| `gps_frame_id` | `gps` | TF frame ID for GPS messages |
+| Parameter                    | Default  | Description                                          |
+| ---------------------------- | -------- | ---------------------------------------------------- |
+| `can_interface`            | `can0` | CAN interface name (can0, vcan0, etc.)               |
+| `stale_command_timeout_ms` | `100`  | ms before /vehicle/drive_command is considered stale |
+| `loop_rate_hz`             | `100`  | Main loop rate. 100Hz = 10ms matches VCU CAN timing  |
+| `imu_frame_id`             | `imu`  | TF frame ID for IMU messages                         |
+| `gps_frame_id`             | `gps`  | TF frame ID for GPS messages                         |
 
 ---
 
 ## 13. Known limitations and future work
 
-| Item | Notes |
-|---|---|
+| Item                    | Notes                                                                                                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Fault bits always false | `fs_ai_api_vcu2ai` does not expose raw VCU fault bits. Fields reserved in `VcuStatus.msg` for when the API is extended or raw frame reading is added |
-| IMU covariance unknown | `sensor_msgs/Imu` covariance matrices set to -1 (unknown). Calibration data needed for SLAM |
-| GPS accuracy | PCAN-GPS provides raw NMEA-style data. No RTK correction |
-| Single CAN interface | Only one CAN interface supported per node instance |
-| No reconnection | If CAN goes down, node must be restarted |
+| IMU covariance unknown  | `sensor_msgs/Imu` covariance matrices set to -1 (unknown). Calibration data needed for SLAM                                                            |
+| GPS accuracy            | PCAN-GPS provides raw NMEA-style data. No RTK correction                                                                                                 |
+| Single CAN interface    | Only one CAN interface supported per node instance                                                                                                       |
+| No reconnection         | If CAN goes down, node must be restarted                                                                                                                 |

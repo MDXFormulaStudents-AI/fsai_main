@@ -31,12 +31,12 @@ setup(
             'forward_distance_controller = fsai_navigation.forward_distance_controller:main',
             'ground_truth_path = fsai_navigation.ground_truth_path:main',
             'perceived_path = fsai_navigation.perceived_path:main',
-            'persistent_path = fsai_navigation.persistent_path:main',
             'local_path_follower = fsai_navigation.local_path_follower:main',
             'pure_pursuit_path_follower = fsai_navigation.local_path_follower:pure_pursuit_main',
             'stanley_path_follower = fsai_navigation.stanley_path_follower:main',
             'skidpad_path = fsai_navigation.skidpad_path:main',
             'global_path_follower = fsai_navigation.global_path_follower:main',
+            'steer_calibration = fsai_navigation.steer_calibration:main',
         ],
     },
 )

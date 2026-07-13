@@ -6,11 +6,12 @@ from dataclasses import dataclass
 import math
 
 import rclpy
+from fsai_interfaces.msg import DriveCommand
 from geometry_msgs.msg import Point
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import Bool, ColorRGBA, String
 from vehiclecontrol_msgs.msg import VehicleControl
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -54,6 +55,17 @@ class ForwardDistanceController(Node):
         self.declare_parameter('max_brake', 0.8)
         self.declare_parameter('hold_brake', 0.8)
         self.declare_parameter('selector_ctrl', 1)
+        # Real-car DriveCommand output (Acceleration mission). Self-gated on
+        # /mission/selected == mission_gate so only this pipeline drives when
+        # acceleration is selected; MissionManager gates again on DRIVING.
+        self.declare_parameter('publish_drive_command', False)
+        self.declare_parameter('drive_command_topic', '/dynamic_drive_command')
+        self.declare_parameter('finished_topic', '/accel/finished')
+        self.declare_parameter('mission_topic', '/mission/selected')
+        self.declare_parameter('mission_gate', 'acceleration')
+        self.declare_parameter('wheel_circumference_m', 1.674)
+        self.declare_parameter('drive_torque_nm', 50.0)
+        self.declare_parameter('max_axle_rpm', 500.0)
         self.declare_parameter('debug_line_width', 0.06)
         self.declare_parameter('debug_point_diameter', 0.3)
         self.declare_parameter('debug_text_height', 0.28)
@@ -77,6 +89,14 @@ class ForwardDistanceController(Node):
         self._max_brake = self.get_parameter('max_brake').get_parameter_value().double_value
         self._hold_brake = self.get_parameter('hold_brake').get_parameter_value().double_value
         self._selector_ctrl = int(self.get_parameter('selector_ctrl').get_parameter_value().integer_value)
+        self._publish_drive_command = self.get_parameter('publish_drive_command').get_parameter_value().bool_value
+        drive_command_topic = self.get_parameter('drive_command_topic').get_parameter_value().string_value
+        finished_topic = self.get_parameter('finished_topic').get_parameter_value().string_value
+        mission_topic = self.get_parameter('mission_topic').get_parameter_value().string_value
+        self._mission_gate = self.get_parameter('mission_gate').get_parameter_value().string_value
+        self._wheel_circumference_m = max(1e-3, self.get_parameter('wheel_circumference_m').get_parameter_value().double_value)
+        self._drive_torque_nm = self.get_parameter('drive_torque_nm').get_parameter_value().double_value
+        self._max_axle_rpm = self.get_parameter('max_axle_rpm').get_parameter_value().double_value
         self._debug_line_width = self.get_parameter('debug_line_width').get_parameter_value().double_value
         self._debug_point_diameter = self.get_parameter('debug_point_diameter').get_parameter_value().double_value
         self._debug_text_height = self.get_parameter('debug_text_height').get_parameter_value().double_value
@@ -89,10 +109,15 @@ class ForwardDistanceController(Node):
         self._odom_frame = 'odom'
         self._child_frame = 'base_link'
         self._completed = False
+        self._finished_sent = False
+        self._selected_mission = 'none'
         self._last_state: DistanceState | None = None
 
         self.create_subscription(Odometry, odom_topic, self._on_odom, 10)
+        self.create_subscription(String, mission_topic, self._on_mission, 10)
         self._control_pub = self.create_publisher(VehicleControl, control_topic, 10)
+        self._drive_pub = self.create_publisher(DriveCommand, drive_command_topic, 10)
+        self._finished_pub = self.create_publisher(Bool, finished_topic, 10)
         self._debug_pub = self.create_publisher(MarkerArray, debug_topic, 10)
         self.create_timer(1.0 / control_rate_hz, self._control_tick)
 
@@ -128,14 +153,51 @@ class ForwardDistanceController(Node):
             f'({self._forward_x:.3f}, {self._forward_y:.3f}), yaw={yaw:.2f} deg'
         )
 
+    def _on_mission(self, msg: String) -> None:
+        mission = msg.data
+        if mission == self._selected_mission:
+            return
+        self._selected_mission = mission
+        if mission == self._mission_gate:
+            # Re-arm for a fresh run: recapture the start pose from the next odom.
+            self._start_position = None
+            self._completed = False
+            self._finished_sent = False
+            self.get_logger().info(f'Acceleration selected; re-armed for {self._target_distance:.1f} m run')
+
+    def _mission_active(self) -> bool:
+        return self._selected_mission == self._mission_gate
+
     def _control_tick(self) -> None:
         state = self._state_from_odom()
         self._last_state = state
         self._debug_pub.publish(self._make_debug_markers(state))
 
+        # Real-car DriveCommand path (self-gated on the acceleration mission).
+        if self._publish_drive_command and self._mission_active():
+            self._drive_pub.publish(self._drive_command_from_state(state))
+            if state.complete and not self._finished_sent:
+                self._finished_sent = True
+                self._finished_pub.publish(Bool(data=True))
+                self.get_logger().info('Acceleration distance reached — mission finished')
+
         if not self._enabled:
             return
         self._publish_control(state.gas, state.brake)
+
+    def _drive_command_from_state(self, state: DistanceState) -> DriveCommand:
+        cmd = DriveCommand()
+        cmd.header.stamp = self.get_clock().now().to_msg()
+        cmd.steer_angle_deg = 0.0  # straight-line acceleration
+        if state.brake > 0.0 or state.target_speed <= self._stop_speed:
+            cmd.axle_speed_rpm = 0.0
+            cmd.axle_torque_nm = 0.0
+        else:
+            axle_rpm = (state.target_speed / self._wheel_circumference_m) * 60.0
+            cmd.axle_speed_rpm = float(self._clamp(axle_rpm, 0.0, self._max_axle_rpm))
+            cmd.axle_torque_nm = float(max(0.0, self._drive_torque_nm))
+        cmd.brake_pct = float(self._clamp(state.brake * 100.0, 0.0, 100.0))
+        return cmd
 
     def _state_from_odom(self) -> DistanceState:
         if self._odom is None or self._start_position is None:

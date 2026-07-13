@@ -44,6 +44,18 @@ class MissionManager(Node):
             10,
         )
         self.create_subscription(Bool, '/static_estop', self._on_static_estop, 10)
+        self.create_subscription(
+            DriveCommand,
+            '/dynamic_drive_command',
+            self._on_dynamic_drive_command,
+            10,
+        )
+        self.create_subscription(
+            Bool,
+            '/dynamic_mission_complete',
+            self._on_dynamic_mission_complete,
+            10,
+        )
 
         self._mission_pub = self.create_publisher(String, '/mission/selected', 10)
         self._drive_pub = self.create_publisher(DriveCommand, '/vehicle/drive_command', 10)
@@ -56,7 +68,7 @@ class MissionManager(Node):
         self.create_timer(1.0 / publish_rate_hz, self._publish_selected_mission)
 
         self.get_logger().info(
-            '── Mission Manager ready  (Static A / Static B / Autonomous Demo) ──'
+            '── Mission Manager ready  (Static A/B, Autonomous Demo + dynamic missions) ──'
         )
 
     def _on_vcu_status(self, msg: VcuStatus) -> None:
@@ -88,11 +100,27 @@ class MissionManager(Node):
         self.get_logger().warn('!! Software E-stop forwarded to vehicle interface !!')
         self._estop_pub.publish(Bool(data=True))
 
+    def _on_dynamic_drive_command(self, msg: DriveCommand) -> None:
+        if not self._dynamic_mission_active():
+            return
+        if self._interface_state != InterfaceState.DRIVING:
+            return
+        self._drive_pub.publish(msg)
+
+    def _on_dynamic_mission_complete(self, msg: Bool) -> None:
+        if not msg.data or not self._dynamic_mission_active():
+            return
+        self.get_logger().info('Dynamic mission complete forwarded to vehicle interface')
+        self._mission_complete_pub.publish(Bool(data=True))
+
     def _publish_selected_mission(self) -> None:
         self._mission_pub.publish(String(data=self._selected_mission))
 
     def _static_mission_active(self) -> bool:
         return self._selected_mission in ('static_inspection_a', 'static_inspection_b', 'autonomous_demo')
+
+    def _dynamic_mission_active(self) -> bool:
+        return self._selected_mission in ('acceleration', 'skidpad', 'autocross', 'trackdrive')
 
     @staticmethod
     def _mission_name(ami_state: int) -> str:

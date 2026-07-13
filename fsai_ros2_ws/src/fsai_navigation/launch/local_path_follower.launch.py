@@ -26,6 +26,11 @@ def generate_launch_description():
         DeclareLaunchArgument('curvature_slowdown_gain', default_value='3.0'),
         DeclareLaunchArgument('speed_brake_gain', default_value='0.5'),
         DeclareLaunchArgument('max_speed_brake', default_value='0.3'),
+        # Plant-inverse gain. Default 1.0 = identity (REAL VEHICLE, do-no-harm).
+        # The CarMaker (CMRosIF) sim realises only ~0.146x of the commanded
+        # road-wheel angle, so SIM runs must opt in with steer_command_gain:=6.85
+        # (see steer_calibration.py). The follower warns whenever this is != 1.0.
+        DeclareLaunchArgument('steer_command_gain', default_value='1.0'),
 
         Node(
             package='fsai_navigation',
@@ -48,6 +53,7 @@ def generate_launch_description():
                 'curvature_slowdown_gain': LaunchConfiguration('curvature_slowdown_gain'),
                 'speed_brake_gain': LaunchConfiguration('speed_brake_gain'),
                 'max_speed_brake': LaunchConfiguration('max_speed_brake'),
+                'steer_command_gain': LaunchConfiguration('steer_command_gain'),
             }],
         ),
     ])

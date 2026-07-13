@@ -1,11 +1,10 @@
 <?xml version="1.0"?>
-<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://relaxng.org/ns/structure/1.0"?>
 <package format="3">
-  <name>fsai_mission_control</name>
+  <name>fsai_localization</name>
   <version>0.1.0</version>
-  <description>Mission supervision and static inspection profile execution for the MDX FSAI stack.</description>
-
-  <maintainer email="shuaibuoluwatunmise@gmail.com">Shuaibu Oluwatunmise</maintainer>
+  <description>Vehicle odometry (wheel + IMU dead-reckoning) and fixed-frame localization for the MDX FSAI stack.</description>
+  <maintainer email="mihiranra@gmail.com">MDX FSAI Software Team</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
@@ -13,9 +12,9 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>fsai_interfaces</exec_depend>
-  <exec_depend>ament_index_python</exec_depend>
-  <exec_depend>python3-yaml</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

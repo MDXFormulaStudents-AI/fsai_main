@@ -94,18 +94,6 @@ Visualization Manager:
 
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: SkidPad Markers
-      Topic:
-        Depth: 10
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /nav/skidpad_path_markers
-      Value: true
-
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
       Name: CarMaker ObjectList
       Topic:
         Depth: 10
@@ -116,11 +104,9 @@ Visualization Manager:
         Value: /carmaker/ObjectList
       Value: true
 
-
-
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: Local Path
+      Name: Local Path FOllower Markers
       Topic:
         Depth: 10
         Durability Policy: Volatile
@@ -128,6 +114,18 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: nav/local_path_follower_markers
+      Value: true
+
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Perceived Path Markers
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /nav/perceived_path_markers
       Value: true
 
 
@@ -214,12 +212,12 @@ Visualization Manager:
 
 Window Geometry:
   Displays:
-    collapsed: false
+    collapsed: true
   Height: 1000
-  Hide Left Dock: false
-  Hide Right Dock: false
+  Hide Left Dock: true
+  Hide Right Dock: true
   Views:
-    collapsed: false
+    collapsed: true
   Width: 1700
   X: 0
   Y: 0
