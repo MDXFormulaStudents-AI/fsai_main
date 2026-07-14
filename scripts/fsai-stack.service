@@ -10,6 +10,10 @@ WorkingDirectory=/home/mdxfsai/fsai_main
 ExecStart=/bin/bash /home/mdxfsai/fsai_main/scripts/start_fsai.sh
 Restart=on-failure
 RestartSec=5
+# Kill the whole process group on stop, and give the script's trap-based
+# teardown time to stop every ros2 launch before SIGKILL.
+KillMode=control-group
+TimeoutStopSec=30
 # Send stdout/stderr to journalctl — view with: journalctl -u fsai-stack -f
 StandardOutput=journal
 StandardError=journal
