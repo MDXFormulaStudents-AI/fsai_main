@@ -336,11 +336,11 @@ source install/setup.bash
 ### 8.1 Real car / CAN HiL
 
 ```bash
-# 1. CAN up (real: can0 @ 500k; HiL bench: vcan0 + vcu_simulator.py)
-sudo ip link set can0 up type can bitrate 500000
+# 1. CAN up (real: can2 @ 500k; HiL bench: vcan0 + vcu_simulator.py)
+sudo ip link set can2 up type can bitrate 500000
 
 # 2. Vehicle interface (CAN HAL + handshake + /vcu/*)
-ros2 launch fsai_vehicle_interface vehicle_interface.launch.py can_interface:=can0
+ros2 launch fsai_vehicle_interface vehicle_interface.launch.py can_interface:=can2
 
 # 3. Sensors + perception (→ /cones)
 ros2 launch fsai_sensors  sensors.launch.py

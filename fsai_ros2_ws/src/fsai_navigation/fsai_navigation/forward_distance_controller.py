@@ -47,6 +47,12 @@ class ForwardDistanceController(Node):
         self.declare_parameter('stop_speed', 0.05)
         self.declare_parameter('max_speed', 2.0)
         self.declare_parameter('slowdown_distance', 3.0)
+        # Minimum forward speed (m/s) commanded while still short of the target.
+        # The proportional slowdown decays speed toward zero as the target nears,
+        # which can stall the vehicle before it crosses the line so completion
+        # (remaining <= distance_tolerance) never latches. Flooring the target
+        # speed keeps it creeping to the line without forcing a premature stop.
+        self.declare_parameter('min_crawl_speed', 0.5)
         self.declare_parameter('min_gas', 0.03)
         self.declare_parameter('max_gas', 0.18)
         self.declare_parameter('gas_gain', 0.08)
@@ -64,7 +70,7 @@ class ForwardDistanceController(Node):
         self.declare_parameter('mission_topic', '/mission/selected')
         self.declare_parameter('mission_gate', 'acceleration')
         self.declare_parameter('wheel_circumference_m', 1.674)
-        self.declare_parameter('drive_torque_nm', 50.0)
+        self.declare_parameter('drive_torque_nm', 500.0)
         self.declare_parameter('max_axle_rpm', 500.0)
         self.declare_parameter('debug_line_width', 0.06)
         self.declare_parameter('debug_point_diameter', 0.3)
@@ -81,6 +87,7 @@ class ForwardDistanceController(Node):
         self._stop_speed = self.get_parameter('stop_speed').get_parameter_value().double_value
         self._max_speed = self.get_parameter('max_speed').get_parameter_value().double_value
         self._slowdown_distance = self.get_parameter('slowdown_distance').get_parameter_value().double_value
+        self._min_crawl_speed = self.get_parameter('min_crawl_speed').get_parameter_value().double_value
         self._min_gas = self.get_parameter('min_gas').get_parameter_value().double_value
         self._max_gas = self.get_parameter('max_gas').get_parameter_value().double_value
         self._gas_gain = self.get_parameter('gas_gain').get_parameter_value().double_value
@@ -272,9 +279,11 @@ class ForwardDistanceController(Node):
         max_speed = max(0.0, self._max_speed)
         slowdown_distance = max(self._slowdown_distance, self._distance_tolerance, 1e-6)
         speed = max_speed * self._clamp(remaining / slowdown_distance, 0.0, 1.0)
-        if speed < self._stop_speed:
-            return 0.0
-        return speed
+        # Floor to a minimum crawl so the last metres are always covered.
+        # _target_speed is only called while remaining > distance_tolerance (the
+        # completion branch in _state_from_odom owns stopping), so this cannot
+        # command motion past the line — it just stops the vehicle stalling short.
+        return max(speed, self._min_crawl_speed)
 
     def _pedals_for(self, target_speed: float, projected_speed: float) -> tuple[float, float]:
         if target_speed <= self._stop_speed:

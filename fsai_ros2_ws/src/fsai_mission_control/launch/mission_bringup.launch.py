@@ -34,20 +34,24 @@ def generate_launch_description():
     wheel_circumference_m = LaunchConfiguration('wheel_circumference_m')
 
     return LaunchDescription([
-        DeclareLaunchArgument('use_sim_time', default_value='true'),
+        # Defaults are set for the real-car / CAN-HiL run (wall-clock time, the
+        # DriveCommand path through mission_manager, real odom source). Override
+        # on the command line for the pure CMRosIF sim if needed.
+        DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('cones_topic', default_value='/cones'),
-        DeclareLaunchArgument('odom_topic', default_value='/carmaker/odom'),
+        DeclareLaunchArgument('odom_topic', default_value='/odometry/vehicle'),
         DeclareLaunchArgument('active_path_topic', default_value='/nav/active_path'),
         DeclareLaunchArgument('drive_command_topic', default_value='/dynamic_drive_command'),
-        # Sim VehicleControl output from the followers (CMRosIF). Real/HiL runs the
-        # DriveCommand path via mission_manager, so leave this off there.
-        DeclareLaunchArgument('follower_enabled', default_value='false'),
+        # Followers active by default so they generate DriveCommand candidates.
+        DeclareLaunchArgument('follower_enabled', default_value='true'),
         DeclareLaunchArgument('steer_command_gain', default_value='1.0'),
         DeclareLaunchArgument('max_speed_mps', default_value='3.0'),
         DeclareLaunchArgument('midline_method', default_value='delaunay'),
         DeclareLaunchArgument('acceleration_distance', default_value='75.0'),
+        DeclareLaunchArgument('acceleration_max_speed', default_value='4.0'),
+        DeclareLaunchArgument('acceleration_min_crawl_speed', default_value='2.0'),
         DeclareLaunchArgument('wheel_circumference_m', default_value='1.674'),
-        DeclareLaunchArgument('drive_torque_nm', default_value='50.0'),
+        DeclareLaunchArgument('drive_torque_nm', default_value='500.0'),
         DeclareLaunchArgument('max_axle_rpm', default_value='500.0'),
         DeclareLaunchArgument('autocross_laps', default_value='1'),
         DeclareLaunchArgument('trackdrive_laps', default_value='10'),
@@ -132,6 +136,8 @@ def generate_launch_description():
                 'drive_command_topic': drive_command_topic,
                 'mission_gate': 'acceleration',
                 'target_distance': LaunchConfiguration('acceleration_distance'),
+                'max_speed': LaunchConfiguration('acceleration_max_speed'),
+                'min_crawl_speed': LaunchConfiguration('acceleration_min_crawl_speed'),
                 'wheel_circumference_m': wheel_circumference_m,
                 'drive_torque_nm': LaunchConfiguration('drive_torque_nm'),
                 'max_axle_rpm': LaunchConfiguration('max_axle_rpm'),

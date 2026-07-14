@@ -173,14 +173,16 @@ void StateMachine::update(
 
     case VehicleState::FINISHED:
     case VehicleState::EMERGENCY:
-      // Wait for a full VCU power cycle.
-      // Recovery condition: VCU is back to AS_OFF AND AMI is cleared.
-      // This only happens after the operator turns off LV Master, ASMS, and TSMS,
-      // then powers back up — which resets the touchscreen mission selection.
-      if (has_vcu_status && as_state == AS_OFF && !mission_requested) {
+      // Recovery is driven purely by AS_OFF, per spec §3.4 (AS_FINISHED → AS_OFF
+      // when the ASMS is turned off) and §3.9 (EMERGENCY_BRAKE → AS_OFF). The
+      // spec does NOT define any trigger that clears AMI_STATE, so we must not
+      // gate recovery on it: the VCU/touchscreen keeps the last AMI latched in
+      // AS_OFF, which would otherwise hang us here forever. Returning to
+      // WAIT_FOR_MISSION lets the operator re-arm for the next run.
+      if (has_vcu_status && as_state == AS_OFF) {
         RCLCPP_INFO(
           rclcpp::get_logger("fsai_state_machine"),
-          "VCU reset detected (AS_OFF, AMI cleared) — ready for new mission");
+          "VCU returned to AS_OFF — ready for new mission");
         transition_to(VehicleState::WAIT_FOR_MISSION);
       }
       break;

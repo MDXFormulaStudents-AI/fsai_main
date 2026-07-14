@@ -73,7 +73,7 @@ class LocalPathFollower(Node):
         self.declare_parameter('mission_topic', '/mission/selected')
         self.declare_parameter('mission_gates', ['skidpad', 'autocross', 'trackdrive'])
         self.declare_parameter('wheel_circumference_m', 1.674)
-        self.declare_parameter('drive_torque_nm', 50.0)
+        self.declare_parameter('drive_torque_nm', 500.0)
         self.declare_parameter('max_axle_rpm', 500.0)
         self.declare_parameter('max_steer_angle_deg', 21.0)
         self.declare_parameter('control_rate_hz', 20.0)
