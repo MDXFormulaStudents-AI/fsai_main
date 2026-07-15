@@ -158,12 +158,18 @@ class Fusion(Node):
         n_lidar = len(cones)
         n_camera = len(dets)
 
+        # Source frame is taken from the incoming cone/cloud header so the same
+        # fusion node works in sim (Lidar_F) and on the real car (velodyne) with
+        # no reconfiguration. Falls back to the configured lidar_frame only if the
+        # header frame_id is unset.
+        lidar_frame = msg.header.frame_id or self._lidar_frame
+
         # TF: lidar_frame → output_frame
         tf_translation = np.zeros(3)
         tf_rotation    = np.eye(3)
         try:
             tf = self._tf_buffer.lookup_transform(
-                self._out_frame, self._lidar_frame, rclpy.time.Time(),
+                self._out_frame, lidar_frame, rclpy.time.Time(),
                 timeout=Duration(seconds=0.05)
             )
             t = tf.transform.translation

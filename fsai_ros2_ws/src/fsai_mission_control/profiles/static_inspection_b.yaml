@@ -15,7 +15,7 @@ steps:
       brake_pct: 0.0
     end:
       steer_angle_deg: 0.0
-      axle_speed_rpm: 500.0
+      axle_speed_rpm: 50.0    # rules: spin to 50 rpm, then EBS
       axle_torque_nm: 1000.0
       brake_pct: 0.0
 
@@ -24,6 +24,6 @@ steps:
     duration_s: 5.0
     command:
       steer_angle_deg: 0.0
-      axle_speed_rpm: 500.0
+      axle_speed_rpm: 50.0    # rules: spin to 50 rpm, then EBS
       axle_torque_nm: 1000.0
       brake_pct: 0.0

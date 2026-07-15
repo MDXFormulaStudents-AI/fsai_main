@@ -12,9 +12,9 @@
 velodyne:
   parent_frame: "base_link"
   child_frame: "velodyne"
-  x: 2.921     # forward from rear axle (m)
+  x: 1.812     # forward from rear axle (m)
   y: 0.0       # centred laterally
-  z: 0.163     # height above ground (m)
+  z: 0.666     # height above ground (m)
   roll: 3.14159 # 180° — LiDAR mounted upside down
   pitch: 0.0
   yaw: 0.0

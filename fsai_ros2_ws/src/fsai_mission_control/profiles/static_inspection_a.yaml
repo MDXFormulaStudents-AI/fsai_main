@@ -70,7 +70,7 @@ steps:
       brake_pct: 0.0
     end:
       steer_angle_deg: 0.0
-      axle_speed_rpm: 500.0
+      axle_speed_rpm: 200.0   # rules: ramp to 200 rpm over 10 s
       axle_torque_nm: 500.0
       brake_pct: 0.0
 

@@ -100,6 +100,11 @@ class SkidpadPath(Node):
 
         # Exit
         self.declare_parameter('exit_distance', 20.0)
+        # Speed (m/s) below which the vehicle is considered stopped. /skidpad/finished
+        # is only published once the car is actually at rest in STOPPED, so the
+        # DRIVING gate stays open (follower keeps braking) until then — mirrors the
+        # acceleration controller's stop check and satisfies spec §3.3.
+        self.declare_parameter('finish_stop_speed', 0.3)
 
         # Mid-loop detection/correction. Method: off, pairing, delaunay, both, single_side.
         self.declare_parameter('mid_loop_detection_method', 'delaunay')
@@ -142,6 +147,7 @@ class SkidpadPath(Node):
 
         self._loop_count_target = int(self.get_parameter('loop_count_target').value)
         self._exit_distance = float(self.get_parameter('exit_distance').value)
+        self._finish_stop_speed = float(self.get_parameter('finish_stop_speed').value)
 
         self._mid_loop_method = str(self.get_parameter('mid_loop_detection_method').value).lower()
         # 'none'/'disabled' are accepted aliases for 'off'. Prefer them on the CLI:
@@ -179,6 +185,7 @@ class SkidpadPath(Node):
         self._vx: float = 0.0
         self._vy: float = 0.0
         self._heading: float = 0.0
+        self._current_speed: float = 0.0
         self._odom_ready: bool = False
 
         # Odometry distance accumulator
@@ -270,6 +277,9 @@ class SkidpadPath(Node):
         self._vx = x
         self._vy = y
         self._heading = heading
+        self._current_speed = math.hypot(
+            msg.twist.twist.linear.x, msg.twist.twist.linear.y
+        )
         self._odom_ready = True
 
         self._update_arc_progress(x, y)
@@ -916,7 +926,40 @@ class SkidpadPath(Node):
     # ── Publish tick ────────────────────────────────────────────────────────
 
     def _on_mission(self, msg: String) -> None:
-        self._selected_mission = msg.data
+        mission = msg.data
+        if mission == self._selected_mission:
+            return
+        self._selected_mission = mission
+        # Re-arm each time this node's mission becomes active so a second run
+        # (after a completed run + recovery) restarts cleanly from APPROACH
+        # instead of staying latched in STOPPED with _finished_sent set.
+        if not self._mission_gated_out():
+            self._reset_run_state()
+            self.get_logger().info('Skidpad selected — re-armed for a new run')
+
+    def _reset_run_state(self) -> None:
+        """Reset the run state machine to a fresh APPROACH (re-arm)."""
+        self._state = SkidpadState.APPROACH
+        self._prev_pos = None
+        self._odom_distance = 0.0
+        self._crossing_x = 0.0
+        self._crossing_y = 0.0
+        self._approach_heading = 0.0
+        self._right_cx = 0.0
+        self._right_cy = 0.0
+        self._left_cx = 0.0
+        self._left_cy = 0.0
+        self._right_start_angle = 0.0
+        self._left_start_angle = 0.0
+        self._crossing_confirmed = False
+        self._orange_centroid = None
+        self._orange_cluster_points = []
+        self._arc_progress = 0.0
+        self._prev_arc_angle = None
+        self._logged_5m = False
+        self._logged_2m = False
+        self._exit_dist_traveled = 0.0
+        self._finished_sent = False
 
     def _mission_gated_out(self) -> bool:
         return bool(self._mission_gates) and self._selected_mission not in self._mission_gates
@@ -940,11 +983,20 @@ class SkidpadPath(Node):
         self._path_pub.publish(self._make_path_msg(points))
         self._debug_pub.publish(self._make_debug_markers(points))
 
-        # Signal loops complete once the state machine reaches STOPPED.
-        if self._state == SkidpadState.STOPPED and not self._finished_sent:
+        # Signal loops complete once STOPPED *and* the vehicle is actually at rest.
+        # Holding here (skidpad publishes no path in STOPPED → follower keeps
+        # braking) keeps the DRIVING gate open until the car stops, so we don't
+        # send mission-complete while still rolling.
+        if (
+            self._state == SkidpadState.STOPPED
+            and not self._finished_sent
+            and self._current_speed <= self._finish_stop_speed
+        ):
             self._finished_sent = True
             self._finished_pub.publish(Bool(data=True))
-            self.get_logger().info('Skidpad loops complete — mission finished')
+            self.get_logger().info(
+                f'Skidpad stopped ({self._current_speed:.2f} m/s) — mission finished'
+            )
 
     # ── Message builders ────────────────────────────────────────────────────
 

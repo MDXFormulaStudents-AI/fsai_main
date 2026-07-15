@@ -13,52 +13,59 @@
 # SIMULATION (CarMaker) — active
 # *****************************************************************************
 
-bridge:
-  pointcloud_in:     /carmaker/pointcloud
-  image_in:          /front_camera_rgb/image_raw
-  depth_in:          /front_camera_depth/image_raw
-  pointcloud_out:    /perception/pointcloud
-  image_out:         /perception/image
-  depth_out:         /perception/depth
-  depth_max_m:       50.0   # CarMaker sends mono16 in cm → converted to float32 metres
-  pointcloud_format: v1     # v1 = CarMaker legacy PointCloud, v2 = PointCloud2 passthrough
+#bridge:
+#  pointcloud_in:     /carmaker/pointcloud
+#  image_in:          /front_camera_rgb/image_raw
+#  depth_in:          /front_camera_depth/image_raw
+#  pointcloud_out:    /perception/pointcloud
+#  image_out:         /perception/image
+#  depth_out:         /perception/depth
+#  depth_max_m:       50.0   # CarMaker sends mono16 in cm → converted to float32 metres
+#  pointcloud_format: v1     # v1 = CarMaker legacy PointCloud, v2 = PointCloud2 passthrough
 
-fusion:
-  lidar_input:       /perception/lidar/cones
-  camera_input:      /perception/camera/detections
-  output_topic:      /cones
-  camera_max_age_s:  1.0
-  bbox_margin_px:    15.0
-  lidar_frame:       Lidar_F
-  output_frame:      Fr1A
-  camera_frame:      Cam_F
-  camera_info_topic: /front_camera_rgb/camera_info
+#fusion:
+#  lidar_input:       /perception/lidar/cones
+#  camera_input:      /perception/camera/detections
+#  output_topic:      /cones
+#  camera_max_age_s:  1.0
+#  bbox_margin_px:    15.0
+#  # lidar_frame is auto-derived from the incoming cone header frame_id; this
+#  # value is only a fallback when the header is unset. output_frame/camera_frame
+#  # still switch per environment.
+#  lidar_frame:       Lidar_F
+#  output_frame:      Fr1A
+#  camera_frame:      Cam_F
+#  camera_info_topic: /front_camera_rgb/camera_info
 
 
 # *****************************************************************************
 # REAL HARDWARE (VLP-16 + ZED2) — commented out
 # *****************************************************************************
 
-# bridge:
-#   pointcloud_in:     /velodyne_points
-#   image_in:          /zed/zed_node/rgb/image_rect_color
-#   depth_in:          /zed/zed_node/depth/depth_registered
-#   pointcloud_out:    /perception/pointcloud
-#   image_out:         /perception/image
-#   depth_out:         /perception/depth
-#   depth_max_m:       50.0
-#   pointcloud_format: v2   # VLP-16 publishes PointCloud2 directly — no conversion needed
+ bridge:
+   pointcloud_in:     /velodyne_points
+   image_in:          /zed/zed_node/rgb/image_rect_color
+   depth_in:          /zed/zed_node/depth/depth_registered
+   pointcloud_out:    /perception/pointcloud
+   image_out:         /perception/image
+   depth_out:         /perception/depth
+   depth_max_m:       50.0
+   pointcloud_format: v2   # VLP-16 publishes PointCloud2 directly — no conversion needed
 
-# fusion:
-#   lidar_input:       /perception/lidar/cones
-#   camera_input:      /perception/camera/detections
-#   output_topic:      /cones
-#   camera_max_age_s:  1.0
-#   bbox_margin_px:    15.0
-#   lidar_frame:       velodyne
-#   output_frame:      base_link
-#   camera_frame:      zed_camera_center
-#   camera_info_topic: /zed/zed_node/rgb/camera_info
+ fusion:
+   lidar_input:       /perception/lidar/cones
+   camera_input:      /perception/camera/detections
+   output_topic:      /cones
+   camera_max_age_s:  1.0
+   bbox_margin_px:    15.0
+   # lidar_frame auto-derived from the cone header (velodyne); value is fallback.
+   lidar_frame:       velodyne
+   # /cones published in Fr1A (same contract as sim). fusion resolves
+   # velodyne -> Fr1A via base_link: velodyne->base_link (sensor_mounts.yaml) and
+   # base_link->Fr1A (carmaker_odom_tf, base_link_to_fr1a_* in vehicle_odometry.launch.py).
+   output_frame:      Fr1A
+   camera_frame:      zed_camera_center
+   camera_info_topic: /zed/zed_node/rgb/camera_info
 
 
 # =============================================================================

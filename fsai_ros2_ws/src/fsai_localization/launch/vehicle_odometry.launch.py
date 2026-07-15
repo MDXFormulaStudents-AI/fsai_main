@@ -24,8 +24,9 @@ def generate_launch_description():
         DeclareLaunchArgument('wheel_circumference_m', default_value='1.674'),
         DeclareLaunchArgument('aligned_frame_id', default_value='home'),
         DeclareLaunchArgument('fr1a_frame_id', default_value='Fr1A'),
-        # base_link -> Fr1A static offset. Set from the ADS-DV datasheet on hardware.
-        DeclareLaunchArgument('base_link_to_fr1a_x', default_value='0.0'),
+        # base_link -> Fr1A static offset (ADS-DV: rear axle sits at x=+0.5637 m in
+        # Fr1A). Only x is non-zero; y/z/rpy use the node defaults (0.0).
+        DeclareLaunchArgument('base_link_to_fr1a_x', default_value='0.5637'),
 
         Node(
             package='fsai_localization', executable='vehicle_odometry',

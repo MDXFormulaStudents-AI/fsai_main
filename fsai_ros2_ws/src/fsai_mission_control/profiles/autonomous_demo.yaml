@@ -6,8 +6,12 @@
 #   4. Accelerate for a further 10m.
 #   5. Deploy EBS.
 #
-# Distance steps use rear-wheel odometry (wheel_circumference_m parameter, default 1.4m).
+# Distance steps use rear-wheel odometry (wheel_circumference_m parameter, default 1.674m).
 # Tune axle_torque_nm and axle_speed_rpm to match actual vehicle response.
+#
+# axle_speed_rpm is a speed LIMIT (not a throttle): speed = rpm/60 * 1.674 m.
+#   100 rpm ~= 2.8 m/s. The demo has no minimum speed requirement — only the 10 m
+#   distances — so a conservative pace keeps the 10 m stop well inside 30% brake.
 
 mission: autonomous_demo
 completion_action: estop
@@ -66,7 +70,7 @@ steps:
     distance_m: 12.0
     command:
       steer_angle_deg:  0.0
-      axle_speed_rpm:   500.0
+      axle_speed_rpm:   100.0   # ~2.8 m/s
       axle_torque_nm:   500.0
       brake_pct:        0.0
 
@@ -89,7 +93,7 @@ steps:
     distance_m: 12.0
     command:
       steer_angle_deg:  0.0
-      axle_speed_rpm:   500.0
+      axle_speed_rpm:   100.0   # ~2.8 m/s
       axle_torque_nm:   500.0
       brake_pct:        0.0
 
