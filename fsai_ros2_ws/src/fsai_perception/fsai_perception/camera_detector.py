@@ -26,14 +26,18 @@ from ultralytics import YOLO
 from ament_index_python.packages import get_package_share_directory
 
 
-def _load_config():
+def _load_config(env, section):
+    """Load common.<section> from perception.yaml, then overlay <env>.<section>."""
     try:
         path = os.path.join(
             get_package_share_directory('fsai_perception'),
             'config', 'perception.yaml'
         )
         with open(path) as f:
-            return yaml.safe_load(f).get('camera_detector', {})
+            data = yaml.safe_load(f) or {}
+        cfg = dict((data.get('common') or {}).get(section, {}))
+        cfg.update((data.get(env) or {}).get(section, {}))
+        return cfg
     except Exception:
         return {}
 
@@ -41,7 +45,9 @@ def _load_config():
 class CameraDetector(Node):
     def __init__(self):
         super().__init__('camera_detector')
-        cfg = _load_config()
+        self.declare_parameter('env', 'sim')
+        env = self.get_parameter('env').value
+        cfg = _load_config(env, 'camera_detector')
 
         pkg_share = get_package_share_directory('fsai_perception')
         default_model = os.path.join(pkg_share, cfg.get('model_path', 'models/best.pt'))
@@ -77,7 +83,7 @@ class CameraDetector(Node):
         self.create_subscription(Image, in_topic, self._cb, 10)
 
         self._frame_count = 0
-        self.get_logger().info(f'Camera detector ready  {in_topic} → {out_topic}')
+        self.get_logger().info(f"Camera detector ready  [env={env}]  {in_topic} → {out_topic}")
 
     # ------------------------------------------------------------------
     def _cb(self, msg: Image):

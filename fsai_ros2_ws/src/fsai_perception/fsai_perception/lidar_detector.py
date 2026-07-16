@@ -24,14 +24,18 @@ from fsai_interfaces.msg import Cone3D, Cone3DArray
 from ament_index_python.packages import get_package_share_directory
 
 
-def _load_config():
+def _load_config(env, section):
+    """Load common.<section> from perception.yaml, then overlay <env>.<section>."""
     try:
         path = os.path.join(
             get_package_share_directory('fsai_perception'),
             'config', 'perception.yaml'
         )
         with open(path) as f:
-            return yaml.safe_load(f).get('lidar_detector', {})
+            data = yaml.safe_load(f) or {}
+        cfg = dict((data.get('common') or {}).get(section, {}))
+        cfg.update((data.get(env) or {}).get(section, {}))
+        return cfg
     except Exception:
         return {}
 
@@ -39,7 +43,9 @@ def _load_config():
 class LidarDetector(Node):
     def __init__(self):
         super().__init__('lidar_detector')
-        cfg = _load_config()
+        self.declare_parameter('env', 'sim')
+        env = self.get_parameter('env').value
+        cfg = _load_config(env, 'lidar_detector')
 
         self.declare_parameter('input_topic',        cfg.get('input_topic',        '/perception/pointcloud'))
         self.declare_parameter('output_topic',        cfg.get('output_topic',       '/perception/lidar/cones'))
@@ -55,6 +61,7 @@ class LidarDetector(Node):
         self.declare_parameter('ground_threshold_m',  cfg.get('ground_threshold_m', 0.10))
         self.declare_parameter('split_threshold_m',   cfg.get('split_threshold_m',  0.45))
         self.declare_parameter('use_intensity_filter',cfg.get('use_intensity_filter', True))
+        self.declare_parameter('snap_to_ground',      cfg.get('snap_to_ground', True))
 
         self._eps          = self.get_parameter('eps').value
         self._min_pts      = self.get_parameter('min_points').value
@@ -68,6 +75,7 @@ class LidarDetector(Node):
         self._gnd_thresh   = self.get_parameter('ground_threshold_m').value
         self._split_thresh = self.get_parameter('split_threshold_m').value
         self._use_intensity= self.get_parameter('use_intensity_filter').value
+        self._snap_ground  = self.get_parameter('snap_to_ground').value
 
         in_topic  = self.get_parameter('input_topic').value
         out_topic = self.get_parameter('output_topic').value
@@ -76,7 +84,7 @@ class LidarDetector(Node):
         self.create_subscription(PointCloud2, in_topic, self._cb, 10)
 
         self._frame_count = 0
-        self.get_logger().info(f'LiDAR detector ready  {in_topic} → {out_topic}')
+        self.get_logger().info(f"LiDAR detector ready  [env={env}]  {in_topic} → {out_topic}")
         self.get_logger().info(
             f'DBSCAN eps={self._eps}m  min_pts={self._min_pts}  '
             f'range={self._min_dist}–{self._max_dist}m'
@@ -190,11 +198,16 @@ class LidarDetector(Node):
                         continue
 
                 centroid = np.mean(cluster, axis=0)
+                # Snap the cone to the ground plane so markers always sit on the
+                # floor (cluster centroids float at mid-cone height, and sparse
+                # VLP-16 hits bias the height randomly). ground_z is the estimated
+                # ground level in the sensor frame.
+                cone_z = float(ground_z) if self._snap_ground else float(centroid[2])
                 cone = Cone3D()
                 cone.header     = header
                 cone.position   = Point(x=float(centroid[0]),
                                         y=float(centroid[1]),
-                                        z=float(centroid[2]))
+                                        z=cone_z)
                 cone.class_name = 'unknown_cone'
                 cone.confidence = float(min(1.0, len(cluster) / 20.0))
                 cone.source     = 'lidar'

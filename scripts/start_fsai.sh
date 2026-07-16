@@ -19,6 +19,10 @@ export ROS_DOMAIN_ID=42
 
 PIDS=()
 CLEANING=""
+WATCHDOG_PID=""
+# ZED camera is launched on its own (LiDAR disabled here) so it can be restarted
+# independently of the critical LiDAR path by zed_supervisor.
+ZED_LAUNCH_ARGS=(fsai_sensors_bringup sensors.launch.py enable_lidar:=false)
 
 cleanup() {
   local code="${1:-1}"
@@ -26,6 +30,11 @@ cleanup() {
   [ -n "$CLEANING" ] && return
   CLEANING=1
   echo "[fsai] tearing down stack..."
+  # Stop the ZED supervisor first (it owns + auto-restarts the non-critical
+  # camera, which lives outside PIDS). SIGTERM lets its own trap gracefully tear
+  # down its ZED child; the final `wait` below reaps it. (KillMode=control-group
+  # is the systemd-level backstop for any straggler.)
+  [ -n "$WATCHDOG_PID" ] && kill -TERM "$WATCHDOG_PID" 2>/dev/null || true
   # Graceful first: SIGINT each ros2 launch (reverse dependency order) so it
   # shuts its own nodes down in an orderly way.
   for ((i=${#PIDS[@]}-1; i>=0; i--)); do
@@ -76,17 +85,51 @@ launch() {
   PIDS+=($!)
 }
 
+# zed_supervisor — the ZED2 on a Jetson frequently fails or hangs on COLD BOOT
+# (USB enumeration / CUDA not ready yet). The camera is NON-CRITICAL: perception
+# degrades to LiDAR-only cones without it, so it is deliberately kept OUT of the
+# all-or-nothing PIDS set (otherwise a camera crash would tear down and restart
+# the entire stack). This runs as its own process — it starts the ZED and
+# restarts ONLY the camera if its image topic disappears, leaving the rest of the
+# stack untouched. Its SIGTERM/INT trap tears down its own ZED child on stop.
+zed_supervisor() {
+  local topic=/zed/zed_node/rgb/image_rect_color
+  local zed_pid=""
+  trap 'kill -INT "$zed_pid" 2>/dev/null; sleep 2; pkill -KILL -P "$zed_pid" 2>/dev/null; exit 0' SIGTERM SIGINT
+  echo "[fsai] launching zed camera (non-critical)..."
+  ros2 launch "${ZED_LAUNCH_ARGS[@]}" & zed_pid=$!
+  while true; do
+    sleep 15
+    if ! ros2 topic list 2>/dev/null | grep -qx "$topic"; then
+      echo "[fsai] WARNING: ZED image topic absent — restarting ZED camera"
+      kill -INT "$zed_pid" 2>/dev/null || true
+      sleep 2; pkill -KILL -P "$zed_pid" 2>/dev/null || true
+      ros2 launch "${ZED_LAUNCH_ARGS[@]}" & zed_pid=$!
+    fi
+  done
+}
+
 # ── 1. Vehicle interface — CAN HAL + handshake + /vcu/* ──────────────────────
 launch "vehicle interface (can2)" \
   fsai_vehicle_interface vehicle_interface.launch.py can_interface:=can2
 wait_for_topic /vcu/status 30
 
-# ── 2. Sensors — VLP-16 + ZED2i drivers ─────────────────────────────────────
-launch "sensors" fsai_sensors_bringup sensors.launch.py
+# ── 2. Sensors — LiDAR (critical) + ZED2i camera (non-critical, supervised) ──
+# LiDAR is in the all-or-nothing set. The camera runs under zed_supervisor so it
+# survives its flaky cold-boot failures without gating boot or tearing the stack
+# down, and auto-restarts if it drops.
+launch "lidar (VLP-16)" fsai_sensors_bringup sensors.launch.py enable_camera:=false
 wait_for_topic /velodyne_points 30
 
+zed_supervisor &
+WATCHDOG_PID=$!
+# Non-fatal (#1): surface a missing/late camera in the boot log, then continue.
+wait_for_topic /zed/zed_node/rgb/image_rect_color 20
+
 # ── 3. Perception — bridge/lidar/camera/fusion → /cones ─────────────────────
-launch "perception" fsai_perception perception.launch.py
+# env:=real  → VLP-16 + ZED2 topics (not CarMaker).
+# use_sim_time:=false → live wall clock; nothing publishes /clock on the real car.
+launch "perception" fsai_perception perception.launch.py env:=real use_sim_time:=false
 wait_for_topic /cones 30
 
 # ── 4. Localization — wheel+IMU odom → /odometry/vehicle + TF chain ─────────

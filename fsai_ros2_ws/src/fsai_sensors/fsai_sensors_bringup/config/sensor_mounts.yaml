@@ -15,7 +15,9 @@ velodyne:
   x: 1.812     # forward from rear axle (m)
   y: 0.0       # centred laterally
   z: 0.666     # height above ground (m)
-  roll: 3.14159 # 180° — LiDAR mounted upside down
+  roll: 0.0    # LiDAR mounted UPRIGHT — confirmed: raw cloud has ground at -z
+               # (sensor Z points up). The old 3.14159 (180°) was wrong and
+               # mirrored the fused cones through a bad roll.
   pitch: 0.0
   yaw: 0.0
 

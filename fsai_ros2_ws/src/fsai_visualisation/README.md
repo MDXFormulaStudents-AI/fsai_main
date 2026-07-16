@@ -1,18 +1,31 @@
 # fsai_visualisation
 
-Visualisation package for the MDX Formula Student AI perception pipeline. Converts the `/cones` topic into coloured 3D cone mesh markers and renders a car model — all viewable live in RViz.
+Visualisation + **monitoring station** for the MDX Formula Student AI stack. It
+converts the custom cone messages into RViz markers and opens a full RViz
+dashboard of the perception / navigation / localization pipeline.
 
-Run this alongside `fsai_perception` to get a full visual display.
+Run it **on the compute**, or on **any laptop on the same `ROS_DOMAIN_ID` (42)
+and DDS network** — the marker converters run locally on the viewer and subscribe
+to the compute's topics over the network, so the compute only has to publish. It
+is **env-aware** (`env:=sim|real`), mirroring `fsai_perception`.
 
 ---
 
 ## What it does
 
-- Subscribes to `/cones` (`fsai_interfaces/Cone3DArray`) and publishes RViz mesh markers for each detected cone
+- Runs **two `cone_visualizer` instances**: `/cones` → `/cone_markers` (fused,
+  coloured) and `/perception/lidar/cones` → `/lidar_cone_markers` (raw LiDAR
+  detections — a key debug tool, always grey since they're pre-camera)
 - Fused cones (camera-confirmed colour) render at full brightness using embedded `.mtl` materials
-- LiDAR-only cones (unknown colour) render as semi-transparent white-tinted meshes
+- LiDAR-only / unknown cones render as semi-transparent white-tinted "ghost" meshes
 - Publishes a static race car body + wheels marker at 10 Hz in the `Fr1A` frame
-- Launches RViz with a pre-configured display (`config/fsai.rviz`)
+- Opens RViz with a full monitoring layout (`config/fsai.rviz`): point cloud,
+  cones (fused + raw), camera detections, nav paths + follower debug, and odometry
+
+> **Why the converters run on the viewer:** RViz cannot render the custom
+> `fsai_interfaces/Cone3DArray` message, so `cone_visualizer` translates it to
+> `visualization_msgs/MarkerArray`. Running it on the laptop keeps all rendering
+> load off the compute.
 
 ---
 
@@ -35,6 +48,11 @@ Run this alongside `fsai_perception` to get a full visual display.
 |---|---|---|
 | `/cone_markers` | `visualization_msgs/MarkerArray` | Coloured cone meshes + text labels |
 | `/car_marker` | `visualization_msgs/MarkerArray` | Race car body + 4 wheels at 10 Hz |
+
+`visualisation.launch.py` runs **two** instances of this node: the primary
+(`/cones` → `/cone_markers`) and a debug one (`lidar_cone_visualizer`,
+`/perception/lidar/cones` → `/lidar_cone_markers`) whose `/car_marker` is remapped
+away so the two don't collide.
 
 ---
 
@@ -62,20 +80,36 @@ Mesh URIs use `package://fsai_visualisation/meshes/...` so they resolve correctl
 
 **File:** `config/fsai.rviz`
 
-Pre-configured displays:
+Full monitoring layout (✓ = enabled by default):
 
-| Display | Topic | Description |
-|---|---|---|
-| Grid | — | XY ground plane, 30 × 30 m |
-| TF | — | All coordinate frames |
-| LiDAR Scan | `/perception/pointcloud` | Raw point cloud (Z-coloured) |
-| Cone Markers | `/cone_markers` | 3D cone meshes + labels |
-| YOLO Camera | `/perception/camera/image` | Annotated camera feed |
-| Car Body | `/car_marker` | Race car mesh |
+| Group | Display | Topic | On |
+|---|---|---|:--:|
+| Base | Grid | — | ✓ |
+| Base | TF | — | ✓ |
+| Perception | LiDAR Scan | `/perception/pointcloud` | ✓ |
+| Perception | Cone Markers (fused) | `/cone_markers` | ✓ |
+| Perception | **Raw LiDAR Cones** | `/lidar_cone_markers` | ✓ |
+| Perception | YOLO Camera | `/perception/camera/image` | ✓ |
+| Navigation | Active Path | `/nav/active_path` | ✓ |
+| Navigation | Path Follower Debug | `/nav/local_path_follower_markers` | ✓ |
+| Navigation | Perceived Path | `/nav/perceived_path_markers` | ✓ |
+| Navigation | Fwd-Distance Debug | `/nav/forward_distance_controller_markers` | ☐ |
+| Navigation | Skidpad Path | `/nav/skidpad_path_markers` | ☐ |
+| Localization | Vehicle Odometry | `/odometry/vehicle` | ✓ |
+| Car | Car Body | `/car_marker` | ✓ |
 
-Fixed frame: `Fr1A` (X-forward, Y-left, Z-up)
+Mission-specific displays start disabled to reduce clutter — toggle them on for
+the mission you're watching. Fixed frame: `Fr1A` (X-forward, Y-left, Z-up).
 
-**To add your own displays**, open `config/fsai.rviz` and add entries under the `# ── ADD YOUR DISPLAYS HERE ───` comment at the bottom of the `Displays` list.
+**Per-env configs:** the launch auto-selects `config/fsai_<env>.rviz` if it exists,
+otherwise `config/fsai.rviz`. Because `fsai_perception`'s `bridge` normalizes topic
+names, sim and real publish the *same* topics, so the single `fsai.rviz` serves
+both — only add a `fsai_real.rviz` / `fsai_sim.rviz` if you want genuinely
+divergent layouts.
+
+**To add your own displays**, open `config/fsai.rviz` and add entries under the
+`# ── ADD YOUR DISPLAYS HERE ───` comment near the bottom of the `Displays` list,
+or add env-only debug nodes in `launch_setup()` in `visualisation.launch.py`.
 
 ---
 
@@ -88,24 +122,47 @@ source /opt/ros/humble/setup.bash
 source ~/fsai_main/fsai_ros2_ws/install/setup.bash
 ```
 
-**Launch visualisation (requires perception pipeline already running):**
+**Launch the monitoring dashboard** (perception pipeline should be publishing —
+locally or on the compute over the network):
 
 ```bash
-ros2 launch fsai_visualisation visualisation.launch.py
+ros2 launch fsai_visualisation visualisation.launch.py env:=real
 ```
 
 **Launch arguments:**
 
 | Argument | Default | Description |
 |---|---|---|
+| `env` | `sim` | `sim` \| `real` — selects `config/fsai_<env>.rviz` (if present) + env-specific debug nodes |
+| `use_sim_time` | `true` | `true` for CarMaker or bag playback (`--clock`); **`false` for the LIVE real car** (otherwise RViz freezes waiting for `/clock`) |
 | `rviz` | `true` | Launch RViz automatically |
-| `show_unknown` | `true` | Show LiDAR-only cones |
+| `rviz_config` | `''` | Override the `.rviz` path (default: auto-select `fsai_<env>.rviz`, else `fsai.rviz`) |
+| `show_unknown` | `true` | Show LiDAR-only (uncoloured) cones on `/cone_markers` |
 
-**Example — hide unknown cones and skip RViz:**
+**Example — live real car:**
 
 ```bash
-ros2 launch fsai_visualisation visualisation.launch.py show_unknown:=false rviz:=false
+ros2 launch fsai_visualisation visualisation.launch.py env:=real use_sim_time:=false
 ```
+
+### Running from a laptop (remote monitoring)
+
+The dashboard is designed to run on a separate laptop while the stack runs on the
+compute. On the laptop:
+
+```bash
+export ROS_DOMAIN_ID=42          # MUST match the compute (start_fsai.sh sets this)
+source /opt/ros/humble/setup.bash
+source ~/fsai_main/fsai_ros2_ws/install/setup.bash
+ros2 launch fsai_visualisation visualisation.launch.py env:=real use_sim_time:=false
+```
+
+Requirements:
+
+1. **Same `ROS_DOMAIN_ID` (42)** as the compute — the #1 reason you'd see nothing.
+2. **Same DDS-reachable network** (same subnet / multicast, or matching discovery server).
+3. **Workspace built on the laptop** — it needs `cone_visualizer` and the
+   `fsai_interfaces` message types to convert cones and resolve topic types.
 
 ---
 

@@ -129,6 +129,155 @@ Visualization Manager:
         Value: /car_marker
       Value: true
 
+    # ── PERCEPTION DEBUG ─────────────────────────────────────────────────────
+
+    # Raw LiDAR detections (pre-fusion) — all grey/ghost. Lets you debug the
+    # clustering independently of the camera/fusion. From the debug cone_visualizer
+    # (/perception/lidar/cones -> /lidar_cone_markers).
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Raw LiDAR Cones
+      Namespaces: {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /lidar_cone_markers
+      Value: true
+
+    # ── NAVIGATION ───────────────────────────────────────────────────────────
+
+    # Active path the follower is tracking (skidpad / autocross / trackdrive)
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 0; 255; 0
+      Enabled: true
+      Head Diameter: 0.3
+      Head Length: 0.2
+      Length: 0.3
+      Line Style: Lines
+      Line Width: 0.05
+      Name: Active Path
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 255; 85; 255
+      Pose Style: None
+      Radius: 0.03
+      Shaft Diameter: 0.1
+      Shaft Length: 0.1
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Volatile
+        Value: /nav/active_path
+      Value: true
+
+    # Pure-pursuit follower debug markers (lookahead point, target, etc.)
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Path Follower Debug
+      Namespaces: {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /nav/local_path_follower_markers
+      Value: true
+
+    # Perceived midline path markers (autocross / trackdrive planner)
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Perceived Path
+      Namespaces: {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /nav/perceived_path_markers
+      Value: true
+
+    # Forward-distance controller (acceleration mission) — off by default
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: false
+      Name: Fwd-Distance Debug
+      Namespaces: {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /nav/forward_distance_controller_markers
+      Value: true
+
+    # Skidpad geometric path markers — off by default
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: false
+      Name: Skidpad Path
+      Namespaces: {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /nav/skidpad_path_markers
+      Value: true
+
+    # ── LOCALIZATION ─────────────────────────────────────────────────────────
+
+    # Vehicle odometry (wheel + IMU dead-reckoning) — pose arrow trail
+    - Angle Tolerance: 0.1
+      Class: rviz_default_plugins/Odometry
+      Covariance:
+        Orientation:
+          Alpha: 0.5
+          Color: 255; 255; 127
+          Color Style: Unique
+          Frame: Local
+          Offset: 1
+          Scale: 1
+          Value: true
+        Position:
+          Alpha: 0.3
+          Color: 204; 51; 204
+          Scale: 1
+          Value: true
+        Value: false
+      Enabled: true
+      Keep: 100
+      Name: Vehicle Odometry
+      Position Tolerance: 0.1
+      Shape:
+        Alpha: 1
+        Axes Length: 1
+        Axes Radius: 0.1
+        Color: 255; 25; 0
+        Head Length: 0.3
+        Head Radius: 0.1
+        Shaft Length: 0.5
+        Shaft Radius: 0.05
+        Value: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /odometry/vehicle
+      Value: true
+
     # ── ADD YOUR DISPLAYS HERE ───────────────────────────────────────────────
 
   Enabled: true

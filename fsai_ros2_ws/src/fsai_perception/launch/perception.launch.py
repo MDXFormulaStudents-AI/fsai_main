@@ -15,6 +15,9 @@ def generate_launch_description():
 
     return LaunchDescription([
 
+        DeclareLaunchArgument('env', default_value='sim',
+                              description='Config environment: sim (CarMaker) or real (VLP-16 + ZED2). '
+                                          'Selects the section of perception.yaml each node loads.'),
         DeclareLaunchArgument('visualize', default_value='false',
                               description='Launch RViz'),
         DeclareLaunchArgument('device', default_value='cuda:0',
@@ -28,7 +31,10 @@ def generate_launch_description():
             executable='bridge',
             name='bridge',
             output='screen',
-            parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
+            parameters=[{
+                'env': LaunchConfiguration('env'),
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
+            }],
         ),
 
         # ── LiDAR Detector ──────────────────────────────────────────────
@@ -37,7 +43,10 @@ def generate_launch_description():
             executable='lidar_detector',
             name='lidar_detector',
             output='screen',
-            parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
+            parameters=[{
+                'env': LaunchConfiguration('env'),
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
+            }],
         ),
 
         # ── Camera Detector ─────────────────────────────────────────────
@@ -47,6 +56,7 @@ def generate_launch_description():
             name='camera_detector',
             output='screen',
             parameters=[{
+                'env': LaunchConfiguration('env'),
                 'device': LaunchConfiguration('device'),
                 'use_sim_time': LaunchConfiguration('use_sim_time'),
             }],
@@ -58,7 +68,10 @@ def generate_launch_description():
             executable='fusion',
             name='fusion',
             output='screen',
-            parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
+            parameters=[{
+                'env': LaunchConfiguration('env'),
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
+            }],
         ),
 
         # ── RViz (optional) ─────────────────────────────────────────────

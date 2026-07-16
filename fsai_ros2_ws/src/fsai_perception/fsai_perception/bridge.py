@@ -28,14 +28,18 @@ from cv_bridge import CvBridge
 from ament_index_python.packages import get_package_share_directory
 
 
-def _load_config():
+def _load_config(env, section):
+    """Load common.<section> from perception.yaml, then overlay <env>.<section>."""
     try:
         path = os.path.join(
             get_package_share_directory('fsai_perception'),
             'config', 'perception.yaml'
         )
         with open(path) as f:
-            return yaml.safe_load(f).get('bridge', {})
+            data = yaml.safe_load(f) or {}
+        cfg = dict((data.get('common') or {}).get(section, {}))
+        cfg.update((data.get(env) or {}).get(section, {}))
+        return cfg
     except Exception:
         return {}
 
@@ -43,7 +47,9 @@ def _load_config():
 class Bridge(Node):
     def __init__(self):
         super().__init__('bridge')
-        cfg = _load_config()
+        self.declare_parameter('env', 'sim')
+        env = self.get_parameter('env').value
+        cfg = _load_config(env, 'bridge')
 
         self.declare_parameter('pointcloud_in',     cfg.get('pointcloud_in',     '/carmaker/pointcloud'))
         self.declare_parameter('image_in',          cfg.get('image_in',          '/front_camera_rgb/image_raw'))
@@ -85,7 +91,7 @@ class Bridge(Node):
         self.create_subscription(Image, img_in, self._img_cb, best_effort)
         self.create_subscription(Image, dep_in, self._dep_cb, 10)
 
-        self.get_logger().info(f'Bridge ready  {pc_in} → {pc_out}  (format={pc_format})')
+        self.get_logger().info(f"Bridge ready  [env={env}]  {pc_in} → {pc_out}  (format={pc_format})")
         self.get_logger().info(f'              {img_in} → {img_out}')
         self.get_logger().info(f'              {dep_in} → {dep_out}')
 

@@ -40,14 +40,18 @@ from geometry_msgs.msg import Point
 from ament_index_python.packages import get_package_share_directory
 
 
-def _load_config():
+def _load_config(env, section):
+    """Load common.<section> from perception.yaml, then overlay <env>.<section>."""
     try:
         path = os.path.join(
             get_package_share_directory('fsai_perception'),
             'config', 'perception.yaml'
         )
         with open(path) as f:
-            return yaml.safe_load(f).get('fusion', {})
+            data = yaml.safe_load(f) or {}
+        cfg = dict((data.get('common') or {}).get(section, {}))
+        cfg.update((data.get(env) or {}).get(section, {}))
+        return cfg
     except Exception:
         return {}
 
@@ -55,7 +59,9 @@ def _load_config():
 class Fusion(Node):
     def __init__(self):
         super().__init__('fusion')
-        cfg = _load_config()
+        self.declare_parameter('env', 'sim')
+        env = self.get_parameter('env').value
+        cfg = _load_config(env, 'fusion')
 
         self.declare_parameter('lidar_input',         cfg.get('lidar_input',         '/perception/lidar/cones'))
         self.declare_parameter('camera_input',        cfg.get('camera_input',        '/perception/camera/detections'))
@@ -103,9 +109,9 @@ class Fusion(Node):
         self._frame_count = 0
         self._extrinsics_warn_count = 0
         self.get_logger().info(
-            f'Fusion ready  lidar={lidar_topic}  camera={camera_topic}  '
-            f'out={out_topic}  cam_frame={self._cam_frame}  '
-            f'camera_info={caminfo_topic}'
+            f'Fusion ready  [env={env}]  lidar={lidar_topic}  camera={camera_topic}  '
+            f'out={out_topic}  lidar_frame={self._lidar_frame}  out_frame={self._out_frame}  '
+            f'cam_frame={self._cam_frame}  camera_info={caminfo_topic}'
         )
 
     # ══════════════════════════════════════════════════════════════════════

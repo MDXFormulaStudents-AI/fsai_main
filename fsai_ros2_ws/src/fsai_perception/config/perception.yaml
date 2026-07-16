@@ -1,107 +1,129 @@
 # =============================================================================
 # FSAI Perception Pipeline — Central Config
-# All tunable parameters live here. Each node reads its section at startup.
-# Parameters can still be overridden at launch time via --ros-args -p <key>:=<val>
 #
-# TO SWITCH ENVIRONMENTS:
-#   Comment out the active section and uncomment the other.
-#   Only the marked blocks need changing — everything else is shared.
+# Structure:
+#   common:  values shared by BOTH environments (all node tuning + shared topics)
+#   sim:     CarMaker (CMRosIF) overrides   — selected by  env:=sim
+#   real:    real car (VLP-16 + ZED2)       — selected by  env:=real
+#
+# The active environment is chosen at launch time, NOT by editing this file:
+#   ros2 launch fsai_perception perception.launch.py env:=sim     # CarMaker
+#   ros2 launch fsai_perception perception.launch.py env:=real    # real car / bag
+#
+# Each node loads  common.<node>  then overlays  <env>.<node>  on top, so an
+# env only needs to specify what actually differs. Never comment/uncomment
+# blocks — just switch env:=. (Default env is 'sim'; see perception.launch.py.)
 # =============================================================================
 
 
 # *****************************************************************************
-# SIMULATION (CarMaker) — active
+# SHARED — identical in sim and real
 # *****************************************************************************
+common:
 
-#bridge:
-#  pointcloud_in:     /carmaker/pointcloud
-#  image_in:          /front_camera_rgb/image_raw
-#  depth_in:          /front_camera_depth/image_raw
-#  pointcloud_out:    /perception/pointcloud
-#  image_out:         /perception/image
-#  depth_out:         /perception/depth
-#  depth_max_m:       50.0   # CarMaker sends mono16 in cm → converted to float32 metres
-#  pointcloud_format: v1     # v1 = CarMaker legacy PointCloud, v2 = PointCloud2 passthrough
+  bridge:
+    pointcloud_out:    /perception/pointcloud
+    image_out:         /perception/image
+    depth_out:         /perception/depth
+    depth_max_m:       50.0
 
-#fusion:
-#  lidar_input:       /perception/lidar/cones
-#  camera_input:      /perception/camera/detections
-#  output_topic:      /cones
-#  camera_max_age_s:  1.0
-#  bbox_margin_px:    15.0
-#  # lidar_frame is auto-derived from the incoming cone header frame_id; this
-#  # value is only a fallback when the header is unset. output_frame/camera_frame
-#  # still switch per environment.
-#  lidar_frame:       Lidar_F
-#  output_frame:      Fr1A
-#  camera_frame:      Cam_F
-#  camera_info_topic: /front_camera_rgb/camera_info
+  fusion:
+    lidar_input:       /perception/lidar/cones
+    camera_input:      /perception/camera/detections
+    output_topic:      /cones
+    camera_max_age_s:  1.0
+    bbox_margin_px:    15.0
+    # /cones is published in Fr1A in both environments (stack contract). On the
+    # real car the odom->home->base_link->Fr1A chain comes from fsai_localization;
+    # in sim it comes from carmaker_odom_tf.
+    output_frame:      Fr1A
+
+  lidar_detector:
+    input_topic:  /perception/pointcloud
+    output_topic: /perception/lidar/cones
+    # DBSCAN clustering
+    eps:        0.35
+    min_points: 2
+    # Detection range
+    min_distance_m: 0.2
+    max_distance_m: 30.0
+    # Cone footprint validation (XY plane)
+    cone_width_min_m: 0.03
+    cone_width_max_m: 0.60
+    # Height validation (disable for 2D/horizontal LiDAR)
+    use_height_filter:  false
+    cone_height_min_m:  0.05
+    cone_height_max_m:  0.50
+    # Ground removal
+    ground_threshold_m: 0.10
+    # Split merged clusters (two cones touching in DBSCAN)
+    split_threshold_m: 0.45
+    # Snap each cone's z onto the estimated ground plane so markers sit on the
+    # floor (instead of floating at the cluster centroid height).
+    snap_to_ground: true
+    # NOTE: use_intensity_filter is ENV-SPECIFIC (see sim/real below). The
+    # intensity model in lidar_detector is calibrated to CarMaker's synthetic
+    # intensity (hundreds–thousands); the real VLP-16 reports 0–255, so the
+    # filter rejects every real cone. On until retuned to the 0–255 scale.
+
+  camera_detector:
+    input_topic:         /perception/image
+    output_topic:        /perception/camera/detections
+    visualization_topic: /perception/camera/image
+    model_path:          models/best.pt
+    confidence:    0.50
+    iou:           0.45
+    input_size:    640
+    device:        cuda:0        # use 'cpu' if no GPU (overridable via launch: device:=cpu)
+    publish_visualization: true
 
 
 # *****************************************************************************
-# REAL HARDWARE (VLP-16 + ZED2) — commented out
+# SIMULATION (CarMaker / CMRosIF)   — env:=sim
 # *****************************************************************************
+sim:
 
- bridge:
-   pointcloud_in:     /velodyne_points
-   image_in:          /zed/zed_node/rgb/image_rect_color
-   depth_in:          /zed/zed_node/depth/depth_registered
-   pointcloud_out:    /perception/pointcloud
-   image_out:         /perception/image
-   depth_out:         /perception/depth
-   depth_max_m:       50.0
-   pointcloud_format: v2   # VLP-16 publishes PointCloud2 directly — no conversion needed
+  bridge:
+    pointcloud_in:     /carmaker/pointcloud
+    image_in:          /front_camera_rgb/image_raw
+    depth_in:          /front_camera_depth/image_raw
+    pointcloud_format: v1     # v1 = CarMaker legacy PointCloud, converted to PointCloud2
 
- fusion:
-   lidar_input:       /perception/lidar/cones
-   camera_input:      /perception/camera/detections
-   output_topic:      /cones
-   camera_max_age_s:  1.0
-   bbox_margin_px:    15.0
-   # lidar_frame auto-derived from the cone header (velodyne); value is fallback.
-   lidar_frame:       velodyne
-   # /cones published in Fr1A (same contract as sim). fusion resolves
-   # velodyne -> Fr1A via base_link: velodyne->base_link (sensor_mounts.yaml) and
-   # base_link->Fr1A (carmaker_odom_tf, base_link_to_fr1a_* in vehicle_odometry.launch.py).
-   output_frame:      Fr1A
-   camera_frame:      zed_camera_center
-   camera_info_topic: /zed/zed_node/rgb/camera_info
+  fusion:
+    lidar_frame:       Lidar_F
+    camera_frame:      Cam_F
+    camera_info_topic: /front_camera_rgb/camera_info
+
+  lidar_detector:
+    use_intensity_filter: true    # CarMaker synthetic intensity matches the model
 
 
-# =============================================================================
-# SHARED — same for both sim and real
-# =============================================================================
+# *****************************************************************************
+# REAL HARDWARE (VLP-16 + ZED2)   — env:=real
+# *****************************************************************************
+real:
 
-lidar_detector:
-  input_topic:  /perception/pointcloud
-  output_topic: /perception/lidar/cones
-  # DBSCAN clustering
-  eps:        0.35
-  min_points: 2
-  # Detection range
-  min_distance_m: 0.2
-  max_distance_m: 30.0
-  # Cone footprint validation (XY plane)
-  cone_width_min_m: 0.03
-  cone_width_max_m: 0.60
-  # Height validation (disable for 2D/horizontal LiDAR)
-  use_height_filter:  false
-  cone_height_min_m:  0.05
-  cone_height_max_m:  0.50
-  # Ground removal
-  ground_threshold_m: 0.10
-  # Split merged clusters (two cones touching in DBSCAN)
-  split_threshold_m: 0.45
-  # Retro-reflective intensity filter
-  use_intensity_filter: true
+  bridge:
+    pointcloud_in:     /velodyne_points
+    image_in:          /zed/zed_node/rgb/image_rect_color
+    depth_in:          /zed/zed_node/depth/depth_registered
+    pointcloud_format: v2     # VLP-16 publishes PointCloud2 directly — passthrough
 
-camera_detector:
-  input_topic:         /perception/image
-  output_topic:        /perception/camera/detections
-  visualization_topic: /perception/camera/image
-  model_path:          models/best.pt
-  confidence:    0.50
-  iou:           0.45
-  input_size:    640
-  device:        cuda:0        # use 'cpu' if no GPU
-  publish_visualization: true
+  fusion:
+    lidar_frame:       velodyne
+    camera_frame:      zed_camera_center
+    camera_info_topic: /zed/zed_node/rgb/camera_info
+
+  lidar_detector:
+    # Tuned on the real VLP-16 bag (open cone course w/ background clutter:
+    # parked cars, wall, people). Baseline sim params gave ~39 cones/frame (mostly
+    # false); these give ~12/frame, keeping both cone rows and rejecting clutter.
+    use_intensity_filter: false   # VLP-16 intensity is 0-255; model expects 100s-1000s → retune later
+    min_distance_m:  1.0          # skip the car's own structure the LiDAR sees near-field
+    max_distance_m:  15.0         # cone zone; beyond is background (VLP-16 barely hits cones past ~15 m anyway)
+    eps:             0.5          # merge big objects (cars/wall) into one oversized cluster -> width-rejected
+    min_points:      3            # drop 2-point noise specks (cones in range still have >=3 pts)
+    cone_width_max_m: 0.5
+    use_height_filter: true       # reject TALL clutter (cars/people/wall)...
+    cone_height_min_m: 0.0        # ...but NO lower floor — sparse VLP-16 cones have ~0 measured height
+    cone_height_max_m: 0.5

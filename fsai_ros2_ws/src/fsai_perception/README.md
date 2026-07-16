@@ -76,7 +76,7 @@ Normalises raw sensor topics into clean internal topics. Input topics and format
 | `/zed/zed_node/rgb/image_rect_color` | `/perception/image` | relay |
 | `/zed/zed_node/depth/depth_registered` (32FC1, metres) | `/perception/depth` (32FC1, metres) | relay — already the right format |
 
-The `pointcloud_format` parameter controls which subscription type is used — `v1` for CarMaker's legacy PointCloud, `v2` for the VLP-16's native PointCloud2. Switch it in `perception.yaml` alongside the topic names.
+The `pointcloud_format` parameter controls which subscription type is used — `v1` for CarMaker's legacy PointCloud, `v2` for the VLP-16's native PointCloud2. It is set per-environment in `perception.yaml` (`sim`/`real` sections) and selected with the `env:=` launch argument (see [Switching between sim and real hardware](#switching-between-sim-and-real-hardware)).
 
 ---
 
@@ -156,32 +156,29 @@ All tunable parameters are in `config/perception.yaml`. You should not need to c
 
 ```
 config/
-  perception.yaml   # all node parameters — sim and real blocks at the top, shared tuning below
+  perception.yaml   # common: (shared tuning) + sim: / real: (per-environment overrides)
 ```
 
 ### Switching between sim and real hardware
 
-`perception.yaml` has two clearly marked blocks at the top — one for CarMaker simulation (active by default) and one for real hardware (VLP-16 + ZED2, commented out). To switch, comment out the sim block and uncomment the real block:
+`perception.yaml` is split into three top-level sections:
 
-```yaml
-# SIMULATION (active)          →  comment this out
-bridge:
-  pointcloud_in: /carmaker/pointcloud
-  ...
-fusion:
-  lidar_frame:  Lidar_F
-  camera_frame: Cam_F
-  ...
+- **`common:`** — everything shared by both environments (all detector tuning, internal topic names, `output_frame: Fr1A`).
+- **`sim:`** — CarMaker (CMRosIF) overrides.
+- **`real:`** — real car (VLP-16 + ZED2) overrides.
 
-# REAL HARDWARE (commented)    →  uncomment this
-# bridge:
-#   pointcloud_in: /velodyne_points
-#   ...
-# fusion:
-#   lidar_frame:  velodyne
-#   camera_frame: zed_camera_center
-#   ...
+Each node loads `common.<node>` then overlays `<env>.<node>`, so a section only lists what actually differs (`bridge` input topics + `pointcloud_format`, and `fusion` frames).
+
+**Do not comment/uncomment blocks.** Select the environment at launch time with the `env` argument:
+
+```bash
+ros2 launch fsai_perception perception.launch.py env:=sim     # CarMaker (default)
+ros2 launch fsai_perception perception.launch.py env:=real    # real car / recorded bag
 ```
+
+Each node prints the environment it resolved on startup, e.g.
+`Bridge ready  [env=real]  /velodyne_points → /perception/pointcloud  (format=v2)`.
+To run a single node standalone, pass the same parameter: `ros2 run fsai_perception bridge --ros-args -p env:=real`.
 
 Sensor mounting positions (for the TF tree) live in `fsai_sensors/fsai_sensors_bringup/config/sensor_mounts.yaml` — that is the single source of truth for where sensors are physically mounted. The perception pipeline reads those positions via TF2 at runtime.
 
@@ -249,20 +246,27 @@ ros2 launch fsai_perception perception.launch.py
 
 | Argument | Default | Description |
 |---|---|---|
+| `env` | `sim` | Config environment — `sim` (CarMaker) or `real` (VLP-16 + ZED2). Selects which section of `perception.yaml` each node loads |
 | `device` | `cuda:0` | YOLO inference device — use `cpu` if CUDA is unavailable |
-| `use_sim_time` | `true` | Use CarMaker simulation clock. **Set to `false` on real hardware** — with `true`, nodes wait for `/clock` from CarMaker and will freeze if it's not running |
+| `use_sim_time` | `true` | Use simulation clock. `true` for CarMaker **or when playing a bag with `--clock`**; nodes wait for `/clock` and will freeze if it's not being published. Set `false` for live real hardware |
 | `visualize` | `false` | Launch RViz (use `fsai_visualisation` instead for full viz) |
 
 **Example — sim (default):**
 
 ```bash
-ros2 launch fsai_perception perception.launch.py
+ros2 launch fsai_perception perception.launch.py env:=sim
 ```
 
-**Example — real hardware:**
+**Example — live real hardware:**
 
 ```bash
-ros2 launch fsai_perception perception.launch.py use_sim_time:=false device:=cuda:0
+ros2 launch fsai_perception perception.launch.py env:=real use_sim_time:=false device:=cuda:0
+```
+
+**Example — real-car data from a recorded bag** (raw VLP-16 + ZED topics, played with `--clock`):
+
+```bash
+ros2 launch fsai_perception perception.launch.py env:=real use_sim_time:=true device:=cuda:0
 ```
 
 ---
