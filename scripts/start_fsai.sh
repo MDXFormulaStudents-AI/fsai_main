@@ -94,18 +94,31 @@ launch() {
 # stack untouched. Its SIGTERM/INT trap tears down its own ZED child on stop.
 zed_supervisor() {
   local topic=/zed/zed_node/rgb/image_rect_color
-  local zed_pid=""
+  local zed_pid="" misses=0
+  local grace=45   # seconds to let the ZED fully OPEN before health-checking — must
+                   # exceed worst-case init so a slow-but-good open is never killed.
   trap 'kill -INT "$zed_pid" 2>/dev/null; sleep 2; pkill -KILL -P "$zed_pid" 2>/dev/null; exit 0' SIGTERM SIGINT
   echo "[fsai] launching zed camera (non-critical)..."
   ros2 launch "${ZED_LAUNCH_ARGS[@]}" & zed_pid=$!
+  sleep "$grace"
   while true; do
-    sleep 15
-    if ! ros2 topic list 2>/dev/null | grep -qx "$topic"; then
-      echo "[fsai] WARNING: ZED image topic absent — restarting ZED camera"
-      kill -INT "$zed_pid" 2>/dev/null || true
-      sleep 2; pkill -KILL -P "$zed_pid" 2>/dev/null || true
-      ros2 launch "${ZED_LAUNCH_ARGS[@]}" & zed_pid=$!
+    if ros2 topic list 2>/dev/null | grep -qx "$topic"; then
+      misses=0
+    else
+      misses=$((misses + 1))
+      echo "[fsai] ZED image topic absent (miss ${misses}/2)"
+      # Require TWO consecutive misses (~30s of genuine absence) before acting, so
+      # a transient blip never triggers a needless restart.
+      if [ "$misses" -ge 2 ]; then
+        echo "[fsai] WARNING: restarting ZED camera"
+        kill -INT "$zed_pid" 2>/dev/null || true
+        sleep 3; pkill -KILL -P "$zed_pid" 2>/dev/null || true
+        ros2 launch "${ZED_LAUNCH_ARGS[@]}" & zed_pid=$!
+        misses=0
+        sleep "$grace"   # give the restarted open the same grace
+      fi
     fi
+    sleep 15
   done
 }
 
