@@ -23,10 +23,32 @@ velodyne:
 
 zed2:
   parent_frame: "base_link"
-  child_frame: "zed_camera_center"
+  # Parent the ZED URDF ROOT (zed_camera_link), NOT zed_camera_center — the ZED
+  # wrapper's own state_publisher already publishes zed_camera_link->zed_camera_center
+  # ->...->optical, so we must attach ONE level up (zed_camera_link) to avoid a
+  # double-parent on zed_camera_center. With pos_tracking off, zed_camera_link is a
+  # free root; this connects the whole ZED tree to base_link (and hence Fr1A) so
+  # fusion can project. The URDF adds zed_camera_link->zed_camera_center = (0,0,0.015),
+  # so z is dropped 0.015 here to land zed_camera_center at the true 0.816 m.
+  child_frame: "zed_camera_link"
   x: 1.532     # forward from rear axle (m)
   y: 0.0       # centred laterally
-  z: 0.816     # height above ground (m)
+  z: 0.801     # zed_camera_link height; +0.015 URDF offset => zed_camera_center at 0.816 m
   roll: 0.0
   pitch: 0.2618 # 15° nose-down in radians (camera looks slightly at ground)
+  yaw: 0.0
+
+# Fr1A — NOT a sensor. It is the CarMaker vehicle-reference / planning frame that
+# /cones and the nav stack live in. It is a FIXED offset from base_link (rear axle),
+# so it is published as a static transform here alongside the sensor mounts — this
+# lets perception/fusion transform into Fr1A with ZERO dependency on odometry or the
+# localization node. (Rear axle sits at x=+0.5637 m in Fr1A.)
+fr1a:
+  parent_frame: "base_link"
+  child_frame: "Fr1A"
+  x: 0.5637
+  y: 0.0
+  z: 0.0
+  roll: 0.0
+  pitch: 0.0
   yaw: 0.0

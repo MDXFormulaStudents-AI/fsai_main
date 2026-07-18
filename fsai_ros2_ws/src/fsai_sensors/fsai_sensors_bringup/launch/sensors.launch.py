@@ -34,6 +34,15 @@ def generate_launch_description():
         description='Launch Velodyne VLP-16 LiDAR (set false when LiDAR not connected)',
     )
 
+    enable_fr1a_arg = DeclareLaunchArgument(
+        'enable_fr1a',
+        default_value='true',
+        description='Publish the static base_link->Fr1A transform. Set false on the '
+                    'camera-only sensors.launch instance (the ZED supervisor passes '
+                    'this) so Fr1A has exactly one owner — the LiDAR instance — and a '
+                    'ZED restart never touches the frame fusion depends on.',
+    )
+
     camera_model_arg = DeclareLaunchArgument(
         'camera_model',
         default_value='zed2',
@@ -54,6 +63,14 @@ def generate_launch_description():
                 ),
                 launch_arguments={
                     'camera_model': LaunchConfiguration('camera_model'),
+                    # Kill the ZED's own TF broadcast. It publishes map->odom->zed_camera_link
+                    # (VIO) at ~26Hz, which roots the whole ZED frame tree at a detached odom
+                    # and overrides our base_link->zed_camera_link — so fusion could never
+                    # resolve Fr1A->zed_camera_center. These are LAUNCH args (they override the
+                    # yaml). With them off, zed_camera_link is free for sensors' zed2_tf to parent
+                    # to base_link. We use wheel+IMU localization, not ZED VIO.
+                    'publish_tf': 'false',
+                    'publish_map_tf': 'false',
                 }.items(),
             )
         ],
@@ -112,13 +129,42 @@ def generate_launch_description():
         ],
     )
 
+    # ── Fr1A vehicle-reference frame (static, NOT a sensor) ───────────────────
+    # base_link -> Fr1A is fixed vehicle geometry, so it belongs with the mounts and
+    # is published here — independent of odometry/localization — so perception/fusion
+    # can transform into Fr1A from just sensors + perception. (vehicle_odometry.launch
+    # no longer publishes Fr1A; this is its single home.)
+    #
+    # Gated on enable_fr1a so it has exactly ONE owner: start_fsai.sh runs sensors.launch
+    # twice (lidar-only + camera-only), and the camera-only instance passes
+    # enable_fr1a:=false. That keeps Fr1A on the LiDAR instance ONLY, so a ZED restart
+    # (which bounces the camera instance) can never disturb the frame fusion depends on.
+    fr1a_tf = Node(
+        condition=IfCondition(LaunchConfiguration('enable_fr1a')),
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='base_link_to_fr1a',
+        arguments=[
+            '--x', str(mounts['fr1a']['x']),
+            '--y', str(mounts['fr1a']['y']),
+            '--z', str(mounts['fr1a']['z']),
+            '--yaw', str(mounts['fr1a']['yaw']),
+            '--pitch', str(mounts['fr1a']['pitch']),
+            '--roll', str(mounts['fr1a']['roll']),
+            '--frame-id', mounts['fr1a']['parent_frame'],
+            '--child-frame-id', mounts['fr1a']['child_frame'],
+        ],
+    )
+
     return LaunchDescription([
         enable_camera_arg,
         enable_lidar_arg,
+        enable_fr1a_arg,
         camera_model_arg,
         zed_launch,
         zed_tf,
         velodyne_driver,
         velodyne_pointcloud,
         velodyne_tf,
+        fr1a_tf,
     ])

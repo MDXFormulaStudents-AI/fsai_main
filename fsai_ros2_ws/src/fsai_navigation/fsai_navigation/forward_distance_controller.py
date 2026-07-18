@@ -8,7 +8,7 @@ import math
 import rclpy
 from fsai_interfaces.msg import DriveCommand
 from geometry_msgs.msg import Point
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_msgs.msg import Bool, ColorRGBA, String
@@ -76,6 +76,24 @@ class ForwardDistanceController(Node):
         self.declare_parameter('debug_point_diameter', 0.3)
         self.declare_parameter('debug_text_height', 0.28)
 
+        # ── Pursuit steering (Option B) ──────────────────────────────────────
+        # Steer toward the perceived-path midline so the acceleration run stays
+        # CENTRED between the cones instead of driving blind-straight. The distance
+        # speed/stop/finished logic below is unchanged. Falls back to straight
+        # (0 rad) whenever there is no fresh, valid path (no cones seen yet, etc.).
+        # Conventions mirror local_path_follower exactly so signs/gain match.
+        self.declare_parameter('path_topic', '/nav/active_path')
+        self.declare_parameter('control_frame', 'Fr1A')
+        self.declare_parameter('path_timeout_sec', 0.5)
+        self.declare_parameter('wheelbase', 1.53)
+        self.declare_parameter('control_point_x_offset', 0.5637)
+        self.declare_parameter('lookahead_distance', 3.0)
+        self.declare_parameter('max_steer', 0.6)              # road-wheel clamp (rad)
+        self.declare_parameter('max_steer_angle_deg', 21.0)   # DriveCommand clamp (deg)
+        self.declare_parameter('steer_sign', 1.0)
+        self.declare_parameter('steer_gain', 1.0)
+        self.declare_parameter('steer_command_gain', 1.0)     # plant-inverse for sim (6.85); 1.0 real
+
         odom_topic = self.get_parameter('odom_topic').get_parameter_value().string_value
         control_topic = self.get_parameter('control_topic').get_parameter_value().string_value
         debug_topic = self.get_parameter('debug_topic').get_parameter_value().string_value
@@ -108,6 +126,18 @@ class ForwardDistanceController(Node):
         self._debug_point_diameter = self.get_parameter('debug_point_diameter').get_parameter_value().double_value
         self._debug_text_height = self.get_parameter('debug_text_height').get_parameter_value().double_value
 
+        path_topic = self.get_parameter('path_topic').get_parameter_value().string_value
+        self._control_frame = self.get_parameter('control_frame').get_parameter_value().string_value
+        self._path_timeout_sec = self.get_parameter('path_timeout_sec').get_parameter_value().double_value
+        self._wheelbase = self.get_parameter('wheelbase').get_parameter_value().double_value
+        self._control_point_x_offset = self.get_parameter('control_point_x_offset').get_parameter_value().double_value
+        self._lookahead_distance = self.get_parameter('lookahead_distance').get_parameter_value().double_value
+        self._max_steer = self.get_parameter('max_steer').get_parameter_value().double_value
+        self._max_steer_angle_deg = self.get_parameter('max_steer_angle_deg').get_parameter_value().double_value
+        self._steer_sign = self.get_parameter('steer_sign').get_parameter_value().double_value
+        self._steer_gain = self.get_parameter('steer_gain').get_parameter_value().double_value
+        self._steer_command_gain = self.get_parameter('steer_command_gain').get_parameter_value().double_value
+
         self._odom: Odometry | None = None
         self._odom_receive_sec = -1.0
         self._start_position: Point | None = None
@@ -119,9 +149,13 @@ class ForwardDistanceController(Node):
         self._finished_sent = False
         self._selected_mission = 'none'
         self._last_state: DistanceState | None = None
+        self._path: Path | None = None
+        self._path_receive_sec = -1.0
+        self._steer_rad = 0.0
 
         self.create_subscription(Odometry, odom_topic, self._on_odom, 10)
         self.create_subscription(String, mission_topic, self._on_mission, 10)
+        self.create_subscription(Path, path_topic, self._on_path, 10)
         self._control_pub = self.create_publisher(VehicleControl, control_topic, 10)
         self._drive_pub = self.create_publisher(DriveCommand, drive_command_topic, 10)
         self._finished_pub = self.create_publisher(Bool, finished_topic, 10)
@@ -176,6 +210,7 @@ class ForwardDistanceController(Node):
         return self._selected_mission == self._mission_gate
 
     def _control_tick(self) -> None:
+        self._steer_rad = self._pursuit_steer()
         state = self._state_from_odom()
         self._last_state = state
         self._debug_pub.publish(self._make_debug_markers(state))
@@ -192,10 +227,58 @@ class ForwardDistanceController(Node):
             return
         self._publish_control(state.gas, state.brake)
 
+    def _on_path(self, msg: Path) -> None:
+        self._path = msg
+        self._path_receive_sec = self._now_sec()
+
+    def _pursuit_steer(self) -> float:
+        """Pure-pursuit road-wheel angle (rad) toward the perceived-path midline.
+
+        Returns 0.0 (straight ahead) when there is no fresh, valid path — so with
+        no cones/path the behaviour is exactly the old blind-straight run. Mirrors
+        local_path_follower's pursuit law and sign convention.
+        """
+        path = self._path
+        if path is None or len(path.poses) < 2:
+            return 0.0
+        if self._now_sec() - self._path_receive_sec > self._path_timeout_sec:
+            return 0.0
+        # Path is expected already in the control_frame (Fr1A / ego). If it isn't,
+        # steer straight rather than guess a transform.
+        if (path.header.frame_id or self._control_frame) != self._control_frame:
+            return 0.0
+
+        # Shift points to the control point (rear axle) and take the first at/after
+        # the lookahead distance; fall back to the farthest forward point.
+        target = None
+        farthest = None
+        for pose in path.poses:
+            x = pose.pose.position.x - self._control_point_x_offset
+            y = pose.pose.position.y
+            if x <= 0.0:
+                continue
+            farthest = (x, y)
+            if math.hypot(x, y) >= self._lookahead_distance:
+                target = (x, y)
+                break
+        if target is None:
+            target = farthest
+        if target is None:
+            return 0.0
+
+        tx, ty = target
+        dist_sq = max(tx * tx + ty * ty, 1e-6)
+        pursuit_curvature = 2.0 * ty / dist_sq
+        steer = self._steer_sign * self._steer_gain * math.atan(self._wheelbase * pursuit_curvature)
+        return self._clamp(steer, -self._max_steer, self._max_steer)
+
     def _drive_command_from_state(self, state: DistanceState) -> DriveCommand:
         cmd = DriveCommand()
         cmd.header.stamp = self.get_clock().now().to_msg()
-        cmd.steer_angle_deg = 0.0  # straight-line acceleration
+        # Pursuit steer to the cone midline (pre-gain road-wheel angle, degrees),
+        # 0.0 when there's no valid path. Same convention as local_path_follower.
+        cmd.steer_angle_deg = float(self._clamp(
+            math.degrees(self._steer_rad), -self._max_steer_angle_deg, self._max_steer_angle_deg))
         if state.brake > 0.0 or state.target_speed <= self._stop_speed:
             cmd.axle_speed_rpm = 0.0
             cmd.axle_torque_nm = 0.0
@@ -303,7 +386,9 @@ class ForwardDistanceController(Node):
         msg.selector_ctrl = self._selector_ctrl
         msg.gas = float(self._clamp(gas, 0.0, 1.0))
         msg.brake = float(self._clamp(brake, 0.0, 1.0))
-        msg.steer_ang = 0.0
+        # Sim (CMRosIF) steer: apply the plant-inverse steer_command_gain to the
+        # pre-gain road-wheel angle. 0.0 when there's no valid path.
+        msg.steer_ang = float(self._steer_rad * self._steer_command_gain)
         msg.steer_ang_vel = 0.0
         msg.steer_ang_acc = 0.0
         self._control_pub.publish(msg)

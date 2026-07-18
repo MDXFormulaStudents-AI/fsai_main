@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 
 import rclpy
@@ -13,7 +13,7 @@ from rclpy.time import Time
 from fsai_interfaces.msg import DriveCommand
 from geometry_msgs.msg import Point, TransformStamped
 from nav_msgs.msg import Odometry, Path
-from std_msgs.msg import ColorRGBA, String
+from std_msgs.msg import Bool, ColorRGBA, String
 import tf2_ros
 from vehiclecontrol_msgs.msg import VehicleControl
 from visualization_msgs.msg import Marker, MarkerArray
@@ -133,6 +133,19 @@ class LocalPathFollower(Node):
         self.declare_parameter('debug_line_width', 0.06)
         self.declare_parameter('debug_point_diameter', 0.25)
 
+        # ── Acceleration distance-stop (Option A) ────────────────────────────
+        # ONLY active when the selected mission == accel_mission AND
+        # accel_target_distance > 0. It follows the perceived-path midline normally
+        # (staying centred between the cones), decelerates over the last
+        # accel_slowdown_distance metres, stops at accel_target_distance, and raises
+        # /accel/finished for dynamic_mission_executor. Disabled by default
+        # (accel_target_distance = 0), so skidpad/autocross/trackdrive are untouched.
+        self.declare_parameter('accel_target_distance', 0.0)
+        self.declare_parameter('accel_mission', 'acceleration')
+        self.declare_parameter('accel_slowdown_distance', 8.0)
+        self.declare_parameter('accel_stop_tolerance', 0.3)
+        self.declare_parameter('accel_finished_topic', '/accel/finished')
+
         path_topic = str(self.get_parameter('path_topic').value)
         control_topic = str(self.get_parameter('control_topic').value)
         debug_topic = str(self.get_parameter('debug_topic').value)
@@ -194,6 +207,15 @@ class LocalPathFollower(Node):
         self._debug_line_width = float(self.get_parameter('debug_line_width').value)
         self._debug_point_diameter = float(self.get_parameter('debug_point_diameter').value)
 
+        self._accel_target_distance = float(self.get_parameter('accel_target_distance').value)
+        self._accel_mission = str(self.get_parameter('accel_mission').value)
+        self._accel_slowdown_distance = max(1e-3, float(self.get_parameter('accel_slowdown_distance').value))
+        self._accel_stop_tolerance = float(self.get_parameter('accel_stop_tolerance').value)
+        accel_finished_topic = str(self.get_parameter('accel_finished_topic').value)
+        self._accel_odom_pos: tuple[float, float] | None = None
+        self._accel_start: tuple[float, float] | None = None
+        self._accel_finished_sent = False
+
         self._path: Path | None = None
         self._path_receive_sec = -1.0
         self._current_speed: float | None = None
@@ -218,6 +240,7 @@ class LocalPathFollower(Node):
         self.create_subscription(Odometry, odom_topic, self._on_odom, 10)
         self.create_subscription(String, mission_topic, self._on_mission, 10)
         self._control_pub = self.create_publisher(VehicleControl, control_topic, 10)
+        self._accel_finished_pub = self.create_publisher(Bool, accel_finished_topic, 10)
         self._drive_pub = self.create_publisher(DriveCommand, drive_command_topic, 10)
         self._debug_pub = self.create_publisher(MarkerArray, debug_topic, 10)
         self.create_timer(1.0 / control_rate_hz, self._control_tick)
@@ -258,6 +281,8 @@ class LocalPathFollower(Node):
         self._current_fwd_speed = vx
         self._current_yaw_rate = msg.twist.twist.angular.z
         self._odom_receive_sec = self._now_sec()
+        p = msg.pose.pose.position
+        self._accel_odom_pos = (p.x, p.y)  # for the acceleration distance-stop
 
     def _control_tick(self) -> None:
         valid, reason = self._inputs_valid()
@@ -288,12 +313,58 @@ class LocalPathFollower(Node):
                 self._drive_pub.publish(self._drive_stop_command())
             return
 
+        # Acceleration distance-stop (Option A): decelerate + stop at the target and
+        # raise /accel/finished. No-op for every other mission (keeps centred steering).
+        target = self._apply_accel_distance_limit(target)
+
         self._debug_pub.publish(self._make_debug_markers(path_points, target, 'active'))
         if self._enabled:
             self._publish_control(target.gas, target.brake, target.published_steer)
         if self._drive_gate_active():
             self._drive_pub.publish(self._drive_command_from_target(target))
         self._log_diagnostics(target, len(path_points))
+
+    def _apply_accel_distance_limit(self, target: LocalTarget) -> LocalTarget:
+        """Acceleration mission only: decelerate over the last accel_slowdown_distance
+        metres, stop at accel_target_distance, and publish /accel/finished once.
+        Returns the target unchanged for all other missions / when disabled."""
+        if self._accel_target_distance <= 0.0 or self._selected_mission != self._accel_mission:
+            self._accel_start = None
+            self._accel_finished_sent = False
+            return target
+        if self._accel_odom_pos is None:
+            return target
+        if self._accel_start is None:
+            self._accel_start = self._accel_odom_pos  # anchor the run start
+        travelled = math.hypot(
+            self._accel_odom_pos[0] - self._accel_start[0],
+            self._accel_odom_pos[1] - self._accel_start[1],
+        )
+        remaining = self._accel_target_distance - travelled
+
+        # Past the line: full stop + one-shot /accel/finished (steering irrelevant now).
+        if remaining <= self._accel_stop_tolerance:
+            if not self._accel_finished_sent:
+                self._accel_finished_pub.publish(Bool(data=True))
+                self._accel_finished_sent = True
+                self.get_logger().info(
+                    f'Acceleration target {self._accel_target_distance:.1f} m reached — stopping'
+                )
+            return replace(target, gas=0.0, brake=self._stop_brake, target_speed=0.0)
+
+        # Approaching: ramp the speed cap down for a smooth stop; brake if over it.
+        if remaining < self._accel_slowdown_distance:
+            scale = self._clamp(remaining / self._accel_slowdown_distance, 0.0, 1.0)
+            capped_speed = self._max_speed_mps * scale
+            gas = target.gas * scale
+            brake = target.brake
+            if self._current_speed is not None and self._current_speed > capped_speed:
+                overspeed = self._current_speed - capped_speed
+                gas = 0.0
+                brake = max(brake, self._clamp(overspeed * self._speed_brake_gain, 0.0, self._max_speed_brake))
+            return replace(target, gas=gas, brake=brake, target_speed=capped_speed)
+
+        return target
 
     def _drive_command_from_target(self, target: LocalTarget) -> DriveCommand:
         cmd = DriveCommand()

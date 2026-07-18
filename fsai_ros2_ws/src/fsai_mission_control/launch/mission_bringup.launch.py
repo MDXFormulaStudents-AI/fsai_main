@@ -101,7 +101,7 @@ def generate_launch_description():
                 'use_sim_time': use_sim_time,
                 'input_topic': cones_topic,
                 'path_topic': active_path_topic,
-                'mission_gates': 'autocross,trackdrive',
+                'mission_gates': 'acceleration,autocross,trackdrive',
                 'midline_method': LaunchConfiguration('midline_method'),
             }],
         ),
@@ -117,7 +117,10 @@ def generate_launch_description():
                 'enabled': LaunchConfiguration('follower_enabled'),
                 'publish_drive_command': True,
                 'drive_command_topic': drive_command_topic,
-                'mission_gates': ['skidpad', 'autocross', 'trackdrive'],
+                # Acceleration now runs through the follower (Option A): it steers to
+                # the perceived-path midline AND stops itself at acceleration_distance.
+                'mission_gates': ['acceleration', 'skidpad', 'autocross', 'trackdrive'],
+                'accel_target_distance': LaunchConfiguration('acceleration_distance'),
                 'steer_command_gain': LaunchConfiguration('steer_command_gain'),
                 'max_speed_mps': LaunchConfiguration('max_speed_mps'),
                 'wheel_circumference_m': wheel_circumference_m,
@@ -125,14 +128,19 @@ def generate_launch_description():
                 'max_axle_rpm': LaunchConfiguration('max_axle_rpm'),
             }],
         ),
+        # forward_distance_controller — RETIRED from acceleration (Option A). The
+        # follower now steers to the cone midline AND runs the distance-stop, so this
+        # blind-straight controller is left dormant (not driving, not commanding). To
+        # revert to blind-straight acceleration: set enabled:=true + publish_drive_command:=true
+        # here, and remove 'acceleration' from local_path_follower's mission_gates above.
         Node(
             package='fsai_navigation', executable='forward_distance_controller',
             name='forward_distance_controller', output='screen',
             parameters=[{
                 'use_sim_time': use_sim_time,
                 'odom_topic': odom_topic,
-                'enabled': LaunchConfiguration('follower_enabled'),
-                'publish_drive_command': True,
+                'enabled': False,
+                'publish_drive_command': False,
                 'drive_command_topic': drive_command_topic,
                 'mission_gate': 'acceleration',
                 'target_distance': LaunchConfiguration('acceleration_distance'),

@@ -38,22 +38,14 @@ def generate_launch_description():
             }],
         ),
 
-        # base_link -> Fr1A: a fixed mechanical offset, so publish it STATICALLY
-        # (always available, independent of odom). This is what lets perception
-        # transform velodyne -> Fr1A even before/without odometry. carmaker_odom_tf's
-        # own odom-gated Fr1A publish is disabled below to avoid a duplicate.
-        Node(
-            package='tf2_ros', executable='static_transform_publisher',
-            name='base_link_to_fr1a', output='screen',
-            arguments=['--x', LaunchConfiguration('base_link_to_fr1a_x'),
-                       '--frame-id', 'base_link',
-                       '--child-frame-id', LaunchConfiguration('fr1a_frame_id')],
-            parameters=[{'use_sim_time': use_sim_time}],
-        ),
+        # NOTE: base_link -> Fr1A is NO LONGER published here. It is fixed vehicle
+        # geometry, so it now lives as a static transform in fsai_sensors_bringup
+        # sensors.launch.py (alongside the sensor mounts) — that decouples perception
+        # /fusion from odometry entirely. carmaker_odom_tf's own odom-gated Fr1A
+        # publish stays disabled below so there is exactly one publisher.
 
         # Fixed-frame builder (reused from fsai_visualisation). Consumes the
-        # synthesized odom and emits odom -> home -> base_link. (Fr1A is now the
-        # static transform above, so publish_base_link_to_fr1a_tf is off here.)
+        # synthesized odom and emits odom -> home -> base_link only.
         Node(
             package='fsai_visualisation', executable='carmaker_odom_tf',
             name='odom_tf', output='screen',
